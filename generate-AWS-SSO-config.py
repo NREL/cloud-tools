@@ -7,31 +7,39 @@ Also optionally generate ~/.aws/credentials for third-party AWS tools.
                             by Michael Bartlett
 """
 import boto3
-import webbrowser
-import datetime
-import time
+import concurrent.futures
 import configparser
-import pathlib
-import json
-import sys
-import os
+import datetime
 import hashlib
 import itertools
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+import os
+import pathlib
+import sys
+import time
+import webbrowser
+
 
 if os.getenv('AWS_DEFAULT_PROFILE') is not None: 
   del os.environ['AWS_DEFAULT_PROFILE']  # Prevent bootstrapping issues
 
 
+AWS_DEFAULT_REGION  = 'us-west-2'
+
 AWS_SSO_START_URL   = 'https://nrel-ace.awsapps.com/start#/'
 AWS_SSO_GRANT_TYPE  = 'urn:ietf:params:oauth:grant-type:device_code'
 AWS_SSO_CLIENT_NAME = 'aws-sso-config-generator'
-AWS_DEFAULT_REGION  = 'us-west-2'
+
+  # AWS CLI client hash logic from botocore.utils.SSOTokenLoader
+AWS_SSO_CLIENT_HASH = hashlib.sha1(AWS_SSO_START_URL.encode('utf-8')).hexdigest()
 
 HOME = pathlib.Path.home()
 AWS_CONFIG_PATH     = HOME / ".aws/config"
 AWS_CREDENTIAL_PATH = HOME / ".aws/credentials"
 AWS_SSO_CACHE_PATH  = HOME / ".aws/sso/cache"
+AWS_SSO_CACHE_FILE  = AWS_SSO_CACHE_PATH / f'{AWS_SSO_CLIENT_HASH}.json'
+AWS_CLI_CACHE_PATH  = HOME / ".aws/cli/cache"
+
 
 sso      = boto3.client('sso',      AWS_DEFAULT_REGION)
 sso_oidc = boto3.client('sso-oidc', AWS_DEFAULT_REGION)
@@ -43,14 +51,16 @@ def printerr(*args, **kwargs):
   sys.stderr.flush()
   
   
-def warn(s, **kwargs):
-  printerr(f"\033[33m{s}\033[0m", **kwargs)
+def fail(s, **kwargs): printerr(f"\033[31m{s}\033[0m", **kwargs); sys.exit(1)
+def warn(s, **kwargs): printerr(f"\033[33m{s}\033[0m", **kwargs)
+def info(s, **kwargs): printerr(f"\033[36m{s}\033[0m", **kwargs)
+def verbose(s, **kwargs): warn(s, **kwargs)
 
 
 def map_multithreaded(function, iterator, workers=10):
-  with ThreadPoolExecutor(max_workers=workers) as pool:
+  with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
     return [ future.result() for future in
-             as_completed( pool.submit(function, item) for item in iterator ) ]
+             concurrent.futures.as_completed( pool.submit(function, item) for item in iterator ) ]
     
     
 def display_packed(options: list):
@@ -65,20 +75,18 @@ def display_packed(options: list):
   options = ('\n'.join( [ gap.join(options[i:i+option_width])
                           for i in range(0, len(options), option_width) ] ) )
   printerr(options)
-  sys.stderr.flush()
   
 
 def interactive_select(options, prompt='', choice=None):
   match = None
-  warn_message = prompt
   suboptions = options
   while match is None:
     if choice is None:
       display_packed(suboptions)
-      if warn_message:
-        warn(warn_message)
-        warn_message = ''
-      choice = input("Enter selection (index or name): ")
+      if prompt:
+        info(prompt)
+        prompt = ''
+      choice = input("Enter selection (index or search term): ")
       printerr()
     if choice.isnumeric():
       try:
@@ -86,7 +94,7 @@ def interactive_select(options, prompt='', choice=None):
         break
       except IndexError:
         pass
-    warn_message = ''
+    prompt = ''
     matches = [ o for o in suboptions if choice.lower() in o.lower() ]
     if len(matches) > 1:
       submatches = [ m for m in matches if m.lower() == choice.lower() ]
@@ -94,10 +102,10 @@ def interactive_select(options, prompt='', choice=None):
         match = submatches[0]
         break
       else:
-        warn_message = f"Multiple matches for '{choice}'\n"
+        prompt = f"Multiple matches for '{choice}'\n"
         suboptions = matches
     elif len(matches) < 1:
-      warn_message = f"No matches for '{choice}'\n"
+      prompt = f"No matches for '{choice}'\n"
       suboptions = options
     else:
       match = matches[0]
@@ -106,19 +114,14 @@ def interactive_select(options, prompt='', choice=None):
   return match
 
 
-def cache_token(access_token, expiration_date, region):
-  # AWS CLI hash name found from botocore.utils.SSOTokenLoader
-  client_hash = hashlib.sha1(AWS_SSO_START_URL.encode('utf-8')).hexdigest()
-  
-  AWS_SSO_CACHE_PATH.mkdir(parents=True, exist_ok=True)
-  with (AWS_SSO_CACHE_PATH / f'{client_hash}.json').open('w') as cache_file:
-    cache_file.write( json.dumps( {'accessToken': access_token,
-                                   'expiresAt': expiration_date,
-                                   'region': region,
-                                   'startUrl': AWS_SSO_START_URL} ) )
+def noninteractive_select(options, prompt='', choice=None):
+  if choice not in options:
+    fail(f"'{choice}' is not present in: {' '.join(options)}")
+  else:
+    return choice
 
 
-def get_access_token():
+def create_access_token():
   register_client_response = sso_oidc.register_client(clientName=AWS_SSO_CLIENT_NAME,
                                                       clientType='public')
   client_id = register_client_response['clientId']
@@ -146,10 +149,41 @@ def get_access_token():
     raise TimeoutError("Script timed out awaiting a valid access token.")
   
   access_token = token_response['accessToken']
-  expiration_date = ( datetime.datetime.now(datetime.timezone.utc)
-                      + datetime.timedelta(0, token_response['expiresIn']) ).isoformat()
-  return access_token, expiration_date
+  expiration_time = ( datetime.datetime.now(datetime.timezone.utc)
+                      + datetime.timedelta(0, token_response['expiresIn']) )
+  return access_token, expiration_time
 
+
+def cache_access_token(access_token, expiration_time, region):
+  AWS_SSO_CACHE_PATH.mkdir(parents=True, exist_ok=True)
+  with AWS_SSO_CACHE_FILE.open('w') as cache_file:
+    cache_file.write( json.dumps( {'accessToken': access_token,
+                                   'expiresAt':   expiration_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                   'region':      region,
+                                   'startUrl':    AWS_SSO_START_URL} ) )
+
+
+def get_cached_access_token():
+  if AWS_SSO_CACHE_FILE.exists():
+    with AWS_SSO_CACHE_FILE.open('r') as cache_file:
+      cache_json      = json.load(cache_file)
+      access_token    = cache_json['accessToken']
+      expiration_time = datetime.datetime.strptime(cache_json['expiresAt'], "%Y-%m-%dT%H:%M:%S%z")
+      if datetime.datetime.now(datetime.timezone.utc) < expiration_time: # Token is not expired
+        verbose("Using cached SSO access token")
+        return access_token, expiration_time
+      else:
+        verbose("Cached SSO access token is expired")
+  return None, None
+
+
+def get_access_token(region):
+  access_token, expiration_time = get_cached_access_token()
+  if access_token is None:
+    access_token, expiration_time = create_access_token()
+    cache_access_token(access_token, expiration_time, region)
+  return access_token
+        
 
 def get_permission_sets(access_token):
   permission_sets = {}
@@ -175,7 +209,7 @@ def get_permission_sets(access_token):
       profile_name = f"{aws_account_name}-{role_name}"
       account_permission_sets[profile_name] = { "role_name":      role_name,
                                                 "aws_account_id": aws_account_id }
-      printerr(f"\r\033[2K{account['accountName']} ({aws_account_id}) - {role_name}", end='')
+      info(f"\r\033[2K{account['accountName']} ({aws_account_id}) - {role_name}", end='')
       
     return account_permission_sets
       
@@ -186,76 +220,152 @@ def get_permission_sets(access_token):
   return { profile_name: profile_data
            for permission_set in permission_sets
            for profile_name, profile_data in permission_set.items() }
+
+
+def create_permission_set_credentials(access_token, role_name, account_id):
+  return sso.get_role_credentials(roleName     = role_name,
+                                  accountId   = account_id,
+                                  accessToken = access_token)['roleCredentials']
+
+
+def get_permission_set_credentials_hash_key(role_name, account_id):
+  # cache key logic from botocore.credentials.SSOCredentialFetcher._create_cache_key
+  profile = {'startUrl': AWS_SSO_START_URL, 'roleName': role_name, 'accountId': account_id}
+  profile_serialized = json.dumps(profile, sort_keys=True, separators=(',', ':'))
+  return hashlib.sha1(profile_serialized.encode('utf-8')).hexdigest()
   
+  
+def cache_permission_set_credentials(role_name, account_id, credentials):
+  profile_hash = get_permission_set_credentials_hash_key(role_name, account_id)
+  profile_credentials = { "ProviderType": "sso",
+                          "Credentials": {"AccessKeyId":     credentials['AccessKeyId'],
+                                          "SecretAccessKey": credentials['SecretAccessKey'],
+                                          "SessionToken":    credentials['SessionToken'],
+                                          "Expiration":      credentials['Expiration']} }
+  AWS_CLI_CACHE_PATH.mkdir(parents=True, exist_ok=True)
+  aws_cli_cache_file = AWS_CLI_CACHE_PATH / f'{profile_hash}.json'
+  with aws_cli_cache_file.open('w') as cache_file:
+    cache_file.write(json.dumps(profile_credentials))
     
-def get_permission_set_credentials(access_token, permission_sets):
-  return {permission_set: sso.get_role_credentials( roleName=permission_set_data['sso_role_name'],
-                                                    accountId=permission_set_data['sso_account_id'],
-                                                    accessToken=access_token )['roleCredentials']
-          for permission_set, permission_set_data in permission_sets.items()}
-    
+    # permission_set_credentials = get_permission_set_credentials(access_token, permission_sets)
+    # aws_credentials = configparser.ConfigParser()
+    # for profile_name, credentials in permission_set_credentials.items():
+    #   aws_credentials.add_section(profile_name)
+    #   credential_section = aws_credentials[profile_name]
+    #   credential_section["aws_access_key_id"]     = credentials["accessKeyId"]
+    #   credential_section["aws_secret_access_key"] = credentials["secretAccessKey"]
+    #   credential_section["aws_session_toke n"]     = credentials["sessionToken"]
+    # aws_credentials.write(AWS_CREDENTIAL_PATH.open('w'))
+    # printerr(f"Wrote credentials to {AWS_CREDENTIAL_PATH}.")
+  
+
+def get_cached_permission_set_credentials(role_name, account_id):
+  profile_hash = get_permission_set_credentials_hash_key(role_name, account_id)
+  aws_cli_cache_file = AWS_CLI_CACHE_PATH / f'{profile_hash}.json'
+  if aws_cli_cache_file.exists():
+    with aws_cli_cache_file.open('r') as cache_file:
+      cache_json = json.load(cache_file)
+      expiration_str = cache_json['Credentials']['Expiration']
+      expiration_time = datetime.datetime.strptime(expiration_str, "%Y-%m-%dT%H:%M:%S%z")
+      if datetime.datetime.now(datetime.timezone.utc) < expiration_time: # Credentials not expired
+        verbose(f"Using cached credentials for {role_name} in {account_id}")
+        return cache_json['Credentials']
+      else:
+        verbose(f"Cached credentials for {role_name} are expired")
+  return None
+
+
+def get_permission_set_credentials(access_token, role_name, account_id):
+  credentials = get_cached_permission_set_credentials(role_name, account_id)
+  if credentials is None:
+    credentials = create_permission_set_credentials(access_token, role_name, account_id)
+    print(credentials)
+    cache_permission_set_credentials(role_name, account_id, credentials)
+  return credentials
+
     
 def main():
   import argparse
   parser = argparse.ArgumentParser()
-  parser.add_argument("--credentials", '-c',
-                      help=f"generate access keypairs for roles in {AWS_CREDENTIAL_PATH}",
-                      action='store_true')
-  parser.add_argument("--region", '-r',
-                      type=str,
-                      help=f"the AWS region to use (default is {AWS_DEFAULT_REGION})",
-                      default=AWS_DEFAULT_REGION)
-  parser.add_argument("--default-profile", "-p",
-                      type=str,
+  parser.add_argument("--region", '-r', type=str,
+                      help=f"The AWS region to use in profiles (default is {AWS_DEFAULT_REGION})")
+  parser.add_argument("--default-profile", "-p", type=str,
                       help="AWS config profile to set as the default profile in [default] section")
-  parser.add_argument("--default-output", "-o",
-                      type=str,
-                      help="default output type to use in AWS CLI config",
-                      default="json",
-                      dest="output",
+  parser.add_argument("--default-output", "-o", type=str, default="json", dest="output",
+                      help="Default output type to use in AWS CLI config (default is json)",
                       choices=['json', 'text', 'table'])
-  parser.add_argument("--aws-config-extras", "-x",
-                      type=str,
-                      help="""comma-separate 'key=value' list of extra config options to write to
+  parser.add_argument("--aws-config-extras", "-x", type=str, dest="extras",
+                      help="""Comma-separate 'key=value' list of extra config options to write to
                               AWS CLI config. Example:
-                              cli_follow_urlparam=false,aws_cli_auto_prompt=on-partial""",
-                      dest="extras")
-  parser.add_argument("--force", '-f',
-                      help="overwrite AWS user config files without asking",
-                      action='store_true')
+                              cli_follow_urlparam=false,aws_cli_auto_prompt=on-partial""")
+  parser.add_argument("--force", '-f', action='store_true',
+                      help="Overwrite AWS user config files without asking")
+  parser.add_argument("--get-role-credentials", action='store_true',
+                      help="generate role credentials for the given --role-name and --acount-id")
+  parser.add_argument("--role-name", "--role", type=str,
+                      help="""The AWS SSO role to get credentials for
+                              (required with --get-role-credentials)""")
+  parser.add_argument("--account-id", "--account", type=str,
+                      help="""The AWS account to get credentials for
+                              (required with --get-role-credentials)""")
+  parser.add_argument("--install-credential-process", action='store_true',
+                      help="""Use this script as the `credential_process` option in the AWS
+                              configuration profiles. This script will automatically create a new
+                              SSO token via SAML auth if your current token expires, whereas the 
+                              default AWS CLI behavior requires the user to run `aws sso login`
+                              manually when this happens, i.e. this option will run 
+                              `aws sso login` automatically if needed. See
+https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html
+                              for more information.""")
   args = parser.parse_args()
+  
+  
+  noninteractive = not sys.stdout.isatty() or not os.isatty(sys.stdin.fileno())
+    
+  if noninteractive:
+    # Output is being redirected, so only print minimal info
+    global verbose
+    verbose = lambda *a, **k: None
+    # Script is not running interactively, so throw errors instead of prompting for input
+    global interactive_select, noninteractive_select
+    interactive_select = noninteractive_select
 
   if args.extras:
       args.extras = {(parts := pair.split('='))[0] : parts[1] for pair in args.extras.split(',')}
+      verbose("Got extra profiles attributes: "
+              f"{' '.join([f'{k}={v}' for k,v in args.extras.items()])}")
   else:
       args.extras = {}
-  
-  if AWS_CONFIG_PATH.exists() and not args.force:
-    if input(f"{AWS_CONFIG_PATH} already exists. Overwrite? [y/N]:")[0].lower() != 'y':
-      printerr(f"{AWS_CONFIG_PATH} unchanged.")
-      sys.exit(1)
       
+  if args.region is None:
+    verbose(f"--region not provided, using default region {AWS_DEFAULT_REGION}")
+    args.region = AWS_DEFAULT_REGION
+  
   sso.meta.config.region_name      = args.region
   sso_oidc.meta.config.region_name = args.region
       
-  access_token, expiration_date = get_access_token()
+  access_token = get_access_token(args.region)
 
-  cache_token(access_token, expiration_date, args.region)
+  if args.get_role_credentials:
+    if not args.role_name or not args.account_id:
+      fail(f"--role-name and --account-id must be provided with --get-role-credentials")
+    credentials = get_permission_set_credentials(access_token, args.role_name, args.account_id)
+    credentials['Version'] = 1
+    print(json.dumps(credentials))
+    return
   
+  
+  if AWS_CONFIG_PATH.exists():
+    if not args.force:
+      if noninteractive:
+        fail(f"{AWS_CONFIG_PATH} already exists. Please use --force or delete this file.")
+      else:
+        if input(f"{AWS_CONFIG_PATH} already exists. Overwrite? [y/N]: ")[0].lower() != 'y':
+          printerr(f"{AWS_CONFIG_PATH} unchanged.")
+          sys.exit(1)
+    
+
   permission_sets = get_permission_sets(access_token)
-  
-  
-  if args.credentials:
-    permission_set_credentials = get_permission_set_credentials(access_token, permission_sets)
-    aws_credentials = configparser.ConfigParser()
-    for profile_name, credentials in permission_set_credentials.items():
-      aws_credentials.add_section(profile_name)
-      credential_section = aws_credentials[profile_name]
-      credential_section["aws_access_key_id"]     = credentials["accessKeyId"]
-      credential_section["aws_secret_access_key"] = credentials["secretAccessKey"]
-      credential_section["aws_session_toke n"]     = credentials["sessionToken"]
-    aws_credentials.write(AWS_CREDENTIAL_PATH.open('w'))
-    printerr(f"Wrote credentials to {AWS_CREDENTIAL_PATH}.")
     
   aws_config = configparser.ConfigParser()
   for profile_name, profile_data in permission_sets.items():
@@ -268,17 +378,34 @@ def main():
     profile_section['sso_region']     = args.region
     profile_section['region']         = args.region
     profile_section['output']         = args.output
+    if args.install_credential_process:
+      credential_process_body = (f'{sys.executable}'
+                                 f' {os.path.abspath(sys.argv[0])}'
+                                 ' --get-role-credentials'
+                                 f" --role-name {profile_data['role_name']}"
+                                 f" --account-id {profile_data['aws_account_id']}")
+      profile_section['credential_process'] = credential_process_body
+    for k,v in args.extras.items():
+      profile_section[k] = v
     
+  
+  if noninteractive and args.default_profile is None:
+    fail("No default profile specified."
+         " Please use --default-profile to specify any of the following profiles as default:"
+         f"\n{' '.join(permission_sets.keys())}")
+  
   default_profile = interactive_select(permission_sets.keys(),
                                        prompt='Select a default profile',
                                        choice=args.default_profile)
-  warn(f"Using {default_profile} as the default AWS profile.")
+  verbose(f"Using {default_profile} as the default AWS profile.")
   
   aws_config.add_section('default')
   aws_config['default'] = aws_config[f"profile {default_profile}"]
     
   aws_config.write(AWS_CONFIG_PATH.open('w'))
-  printerr(f"Wrote SSO permission set profiles to {AWS_CONFIG_PATH}.")
+  verbose(f"Wrote SSO permission set profiles to {AWS_CONFIG_PATH}.")
+  
+
   
 
 if __name__ == '__main__':
