@@ -464,25 +464,29 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
   permission_sets = get_permission_sets(access_token)
     
   aws_config = configparser.ConfigParser()
+  
   for profile_name, profile_data in permission_sets.items():
     section_header = f"profile {profile_name}"
     aws_config.add_section(section_header)
     profile_section = aws_config[section_header]
-    profile_section['region']         = args.region
-    profile_section['output']         = args.output
+    profile_section['region'] = args.region
+    profile_section['output'] = args.output
+    
     if args.install_credential_process:
       credential_process_body = (f'{sys.executable}'
                                  f' {os.path.abspath(sys.argv[0])}'
-                                 ' --get-role-credentials'
+                                  ' --get-role-credentials'
                                  f" --role-name {profile_data['role_name']}"
                                  f" --account-id {profile_data['aws_account_id']}")
       profile_section['credential_process'] = credential_process_body
+      
     else:
       # sso_* profile attributes override credential_process attribute, they are mutually exclusive
       profile_section['sso_start_url']  = AWS_SSO_START_URL
       profile_section['sso_account_id'] = profile_data['aws_account_id']
       profile_section['sso_role_name']  = profile_data['role_name']
       profile_section['sso_region']     = args.region
+      
     for k,v in args.extras.items():
       profile_section[k] = v
     
@@ -502,8 +506,6 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
     
   aws_config.write(AWS_CONFIG_PATH.open('w'))
   verbose(f"Wrote SSO permission set profiles to {AWS_CONFIG_PATH}.")
-  
-
   
 
 if __name__ == '__main__':
