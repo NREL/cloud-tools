@@ -8,6 +8,7 @@ having to run `aws sso login` after encountered an error message.
 
                             by Michael Bartlett
 """
+from curses import has_il
 import boto3
 import botocore
 import concurrent.futures
@@ -18,6 +19,8 @@ import itertools
 import json
 import os
 import pathlib
+import shutil
+import stat
 import sys
 import time
 import webbrowser
@@ -136,6 +139,7 @@ def create_access_token():
                                                       clientType='public')
   client_id = register_client_response['clientId']
   client_secret = register_client_response['clientSecret']
+  
   start_authorization_response = sso_oidc.start_device_authorization(clientId=client_id,
                                                                      clientSecret=client_secret,
                                                                      startUrl=AWS_SSO_START_URL)
@@ -198,13 +202,17 @@ def get_access_token(region):
   return access_token
         
 
+def get_profile_name(aws_account_name, role_name):
+  return f"{aws_account_name.replace(' ','-').lower()}-{role_name}"
+
+
+def get_permission_set_accounts(access_token):
+  return (sso.get_paginator('list_accounts').paginate(accessToken=access_token)
+          .build_full_result()['accountList'])
+
 def get_permission_sets(access_token):
   permission_sets = {}
-  accounts = (sso
-              .get_paginator('list_accounts')
-              .paginate(accessToken=access_token)
-              .build_full_result()
-              ['accountList'])
+  accounts = get_permission_set_accounts(access_token)
               
   def _get_account_roles_thread_task(account):
     aws_account_id   = account['accountId']
@@ -219,7 +227,7 @@ def get_permission_sets(access_token):
     
     for role in roles:
       role_name = role['roleName']
-      profile_name = f"{aws_account_name}-{role_name}"
+      profile_name = get_profile_name(aws_account_name, role_name)
       account_permission_sets[profile_name] = { "role_name":      role_name,
                                                 "aws_account_id": aws_account_id }
       info(f"\r\033[2K{account['accountName']} ({aws_account_id}) - {role_name}", end='')
@@ -236,7 +244,7 @@ def get_permission_sets(access_token):
 
 
 def create_permission_set_credentials(access_token, role_name, account_id):
-  role_credentials = sso.get_role_credentials(roleName     = role_name,
+  role_credentials = sso.get_role_credentials(roleName    = role_name,
                                               accountId   = account_id,
                                               accessToken = access_token)['roleCredentials']
   expiration_iso = (datetime.datetime
@@ -255,13 +263,28 @@ def get_permission_set_credentials_hash_key(role_name, account_id):
   return hashlib.sha1(profile_serialized.encode('utf-8')).hexdigest()
   
   
-def cache_permission_set_credentials(role_name, account_id, credentials):
+def cache_permission_set_credentials(access_token, role_name, account_id, credentials):
   profile_hash = get_permission_set_credentials_hash_key(role_name, account_id)
   profile_credentials = { "ProviderType": "sso", "Credentials": credentials }
   AWS_CLI_CACHE_PATH.mkdir(parents=True, exist_ok=True)
   aws_cli_cache_file = AWS_CLI_CACHE_PATH / f'{profile_hash}.json'
   with aws_cli_cache_file.open('w') as cache_file:
     cache_file.write(json.dumps(profile_credentials))
+    
+  # Also cache credentials to ~/.aws/credentials to avoid CLI tools not supporting SSO based auth
+  accounts = get_permission_set_accounts(access_token)
+  account = [account for account in accounts if account['accountId'] == account_id][0]
+  account_name = account['accountName']
+  profile_name = get_profile_name(account_name, role_name)
+  aws_credentials = configparser.ConfigParser()
+  aws_credentials.read(AWS_CREDENTIAL_PATH)
+  if not profile_name in aws_credentials.sections():
+    aws_credentials.add_section(profile_name)
+  credential_section = aws_credentials[profile_name]
+  credential_section["aws_access_key_id"]     = credentials["AccessKeyId"]
+  credential_section["aws_secret_access_key"] = credentials["SecretAccessKey"]
+  credential_section["aws_session_token"]     = credentials["SessionToken"]
+  aws_credentials.write(AWS_CREDENTIAL_PATH.open('w'))
     
 
 def get_cached_permission_set_credentials(role_name, account_id):
@@ -284,10 +307,67 @@ def get_permission_set_credentials(access_token, role_name, account_id):
   credentials = get_cached_permission_set_credentials(role_name, account_id)
   if credentials is None:
     credentials = create_permission_set_credentials(access_token, role_name, account_id)
-    cache_permission_set_credentials(role_name, account_id, credentials)
+    cache_permission_set_credentials(access_token, role_name, account_id, credentials)
   return credentials
 
+
+def install():
+  current_executable_path = sys.argv[0]
+  executable_name = os.path.basename(current_executable_path)
+  bin_directory_suffix = '.local/bin'
+  bin_directory = HOME / bin_directory_suffix
+  target_executable_path = bin_directory / executable_name
+  actual_executable_path = shutil.which(executable_name)
+  
+  if actual_executable_path is not None:     # respect existing $PATH placement
+    target_executable_path = pathlib.Path(actual_executable_path)
+  
+  if target_executable_path.exists():
+    if os.path.getmtime(current_executable_path) > os.path.getmtime(target_executable_path):
+      shutil.copy(current_executable_path, target_executable_path)
+      info(f"Updated {target_executable_path}")
+    else:
+      warn(f"{target_executable_path} is the same or newer than the version of {executable_name} "
+           f"that is currently executing from {current_executable_path}\n\nNo files modified.")
+    return
+  else:
+    bin_directory.mkdir(parents=True, exist_ok=True)
+    shutil.copy(current_executable_path, target_executable_path)
+    in_path = any([ pathlib.Path(path).absolute() == bin_directory.absolute()
+                    for path in os.getenv('PATH').split(':') ])
+    if not in_path:
+      SHELLRCS = {"bash": HOME/'.bashrc', "zsh": HOME/'.zshrc', "csh": HOME/'.cshrc' }
+      shell = os.getenv('SHELL')
+      if shell is not None:
+        shell_string = f"The current shell detected is {shell}. "
+        rc_path = SHELLRCS.get(shell, HOME/'.profile')
+      else:
+        shell_string=''
+        rc_path = HOME/'.profile'
+        
+      warn(f"Installed {executable_name} to {target_executable_path} but {bin_directory} is "
+           "not present in the $PATH environment variable."
+           f"\n\n{shell_string}Please add this command to your shell initialization file {rc_path}:"
+           f"\n\nexport PATH=\"{bin_directory}:$PATH\"")
+           
+    else:
+      info(f"Installed {executable_name} to {target_executable_path}\n\nThis script can now be "
+           f"executed with just the command:\n\t{executable_name}")
+      
+    target_executable_path.chmod(target_executable_path.stat().st_mode | stat.S_IEXEC)
     
+    
+def uninstall():
+  current_executable_path = sys.argv[0]
+  executable_name = os.path.basename(current_executable_path)
+  actual_executable_path = shutil.which(executable_name)
+  if actual_executable_path is None:
+    fail(f"{executable_name} is not in $PATH. No files modified.")
+  else:
+    pathlib.Path(actual_executable_path).unlink()
+    info(f"Deleted {actual_executable_path}, {executable_name} is no longer in $PATH.")
+
+
 def main():
   import argparse
   parser = argparse.ArgumentParser()
@@ -304,6 +384,11 @@ def main():
                               cli_follow_urlparam=false,aws_cli_auto_prompt=on-partial""")
   parser.add_argument("--force", '-f', action='store_true',
                       help="Overwrite AWS user config files without asking")
+  parser.add_argument("--install", action='store_true',
+                      help="""Attempt to install this script to $PATH so it can executed without
+                              providing the full path of this script""")
+  parser.add_argument("--uninstall", action='store_true',
+                      help="""Uninstall this script from $PATH""")
   parser.add_argument("--get-role-credentials", action='store_true',
                       help="generate role credentials for the given --role-name and --acount-id")
   parser.add_argument("--role-name", "--role", type=str,
@@ -322,6 +407,14 @@ def main():
 https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html
                               for more information.""")
   args = parser.parse_args()
+  
+  if args.uninstall:
+    uninstall()
+    return
+    
+  if args.install:
+    install()
+    return
   
   
   noninteractive = not sys.stdout.isatty() or not os.isatty(sys.stdin.fileno())
