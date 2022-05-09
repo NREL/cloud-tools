@@ -6,9 +6,8 @@ Can also optionally serve as the credential_process for AWS profiles to automati
 SAML auth if the user's current credentials or SSO token are expired, preventing the user from
 having to run `aws sso login` after encountering an error message about expired credentials.
 
-                            by Michael Bartlett
+                                     by Michael Bartlett
 """
-from curses import has_il
 import boto3
 import botocore
 import concurrent.futures
