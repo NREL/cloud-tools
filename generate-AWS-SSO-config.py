@@ -4,7 +4,7 @@
 Automatically fetch AWS SSO login token and generate ~/.aws/config file with user's SSO roles.
 Can also optionally serve as the credential_process for AWS profiles to automatically start the
 SAML auth if the user's current credentials or SSO token are expired, preventing the user from
-having to run `aws sso login` after encountered an error message.
+having to run `aws sso login` after encountering an error message about expired credentials.
 
                             by Michael Bartlett
 """
