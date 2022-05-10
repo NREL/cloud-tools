@@ -51,7 +51,7 @@ With no arguments the user will be prompted to interactively provide required in
 ```
 $ generate-AWS-SSO-config.py
 
-/Users/mbartlet/.aws/config already exists. Overwrite? [y/N]: y
+~/.aws/config already exists. Overwrite? [y/N]: y
 
 --region not provided, using default region us-west-2
 
@@ -154,3 +154,9 @@ $ aws --profile nrel-aws-account3-Permission-Set-1 sts get-caller-identity
     "Arn": "arn:aws:sts::333333333333:assumed-role/AWSReservedSSO_Permission-Set-1_ffffffffffffc6ec/username@nrel.gov"
 }
 ```
+
+### Tests
+
+Execute [.tests/test-generate-AWS-SSO-config.sh](./.tests/test-generate-AWS-SSO-config.sh)
+
+Each line of output should start with a green checkmark, any red X's indicates the code is not working as intended.
