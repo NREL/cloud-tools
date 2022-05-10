@@ -120,8 +120,6 @@ grep $profile_name ~/.aws/credentials &>/dev/null  \
   && pass "$profile_name cached credentials found in ~/.aws/credentials after CLI command" \
   || fail "$profile_name should have cached credentials in ~/.aws/credentials but none were found"
 
-# offer --install if --install-credential-process interactively
-  
 $cmd  --uninstall &>/dev/null \
   || fail "Command should have uninstalled successfully" \
   && pass "Command reported successful uninstall"

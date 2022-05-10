@@ -98,7 +98,9 @@ manually when this happens.
 
 In other words, this script (when installed as the `credential_process` option) will run `aws sso login` automatically on the user's behalf as needed.
 
-**Note that these benefits also extend to the AWS SDKs and therefore any applications that use the AWS SDKs.**
+**Note that with the `credential_process` option the user will no longer be able to execute `aws sso login` (it will complain about misconfigured SSO profile), but this script will handle authenticating automatically such that you should not need to run `aws sso login`.**
+
+**Also note that these benefits also extend to the AWS SDKs and therefore any applications that use the AWS SDKs.**
 
 Please see https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html for more information.
                               

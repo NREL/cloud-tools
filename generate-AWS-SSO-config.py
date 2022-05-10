@@ -41,6 +41,9 @@ AWS_SSO_CACHE_PATH  = HOME / ".aws/sso/cache"
 AWS_SSO_CACHE_FILE  = AWS_SSO_CACHE_PATH / f'{AWS_SSO_CLIENT_HASH}.json'
 AWS_CLI_CACHE_PATH  = HOME / ".aws/cli/cache"
 
+CURRENT_EXECUTABLE_PATH = sys.argv[0]
+EXECUTABLE_NAME = os.path.basename(CURRENT_EXECUTABLE_PATH)
+
 
 """ Create a boto session with absolutely no authentication.
     This prevents an infinite authentication recursion bug if this script is used as the
@@ -311,27 +314,25 @@ def get_permission_set_credentials(access_token, role_name, account_id):
 
 
 def install():
-  current_executable_path = sys.argv[0]
-  executable_name = os.path.basename(current_executable_path)
   bin_directory_suffix = '.local/bin'
   bin_directory = HOME / bin_directory_suffix
-  target_executable_path = bin_directory / executable_name
-  actual_executable_path = shutil.which(executable_name)
+  target_executable_path = bin_directory / EXECUTABLE_NAME
+  actual_executable_path = shutil.which(EXECUTABLE_NAME)
   
   if actual_executable_path is not None:     # respect existing $PATH placement
     target_executable_path = pathlib.Path(actual_executable_path)
   
   if target_executable_path.exists():
-    if os.path.getmtime(current_executable_path) > os.path.getmtime(target_executable_path):
-      shutil.copy(current_executable_path, target_executable_path)
+    if os.path.getmtime(CURRENT_EXECUTABLE_PATH) > os.path.getmtime(target_executable_path):
+      shutil.copy(CURRENT_EXECUTABLE_PATH, target_executable_path)
       info(f"Updated {target_executable_path}")
     else:
-      warn(f"{target_executable_path} is the same or newer than the version of {executable_name} "
-           f"that is currently executing from {current_executable_path}\n\nNo files modified.")
+      warn(f"{target_executable_path} is the same or newer than the version of {EXECUTABLE_NAME} "
+           f"that is currently executing from {CURRENT_EXECUTABLE_PATH}\n\nNo files modified.")
     return
   else:
     bin_directory.mkdir(parents=True, exist_ok=True)
-    shutil.copy(current_executable_path, target_executable_path)
+    shutil.copy(CURRENT_EXECUTABLE_PATH, target_executable_path)
     in_path = any([ pathlib.Path(path).absolute() == bin_directory.absolute()
                     for path in os.getenv('PATH').split(':') ])
     if not in_path:
@@ -344,27 +345,25 @@ def install():
         shell_string=''
         rc_path = HOME/'.profile'
         
-      warn(f"Installed {executable_name} to {target_executable_path} but {bin_directory} is "
+      warn(f"Installed {EXECUTABLE_NAME} to {target_executable_path} but {bin_directory} is "
            "not present in the $PATH environment variable."
            f"\n\n{shell_string}Please add this command to your shell initialization file {rc_path}:"
            f"\n\nexport PATH=\"{bin_directory}:$PATH\"")
            
     else:
-      info(f"Installed {executable_name} to {target_executable_path}\n\nThis script can now be "
-           f"executed with just the command:\n\t{executable_name}")
+      info(f"Installed {EXECUTABLE_NAME} to {target_executable_path}\n\nThis script can now be "
+           f"executed with just the command:\n\t{EXECUTABLE_NAME}")
       
     target_executable_path.chmod(target_executable_path.stat().st_mode | stat.S_IEXEC)
     
     
 def uninstall():
-  current_executable_path = sys.argv[0]
-  executable_name = os.path.basename(current_executable_path)
-  actual_executable_path = shutil.which(executable_name)
+  actual_executable_path = shutil.which(EXECUTABLE_NAME)
   if actual_executable_path is None:
-    fail(f"{executable_name} is not in $PATH. No files modified.")
+    fail(f"{EXECUTABLE_NAME} is not in $PATH. No files modified.")
   else:
     pathlib.Path(actual_executable_path).unlink()
-    info(f"Deleted {actual_executable_path}, {executable_name} is no longer in $PATH.")
+    info(f"Deleted {actual_executable_path}, {EXECUTABLE_NAME} is no longer in $PATH.")
 
 
 def main():
@@ -444,7 +443,12 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
 
   if args.get_role_credentials:
     if not args.role_name or not args.account_id:
-      fail(f"--role-name and --account-id must be provided with --get-role-credentials")
+      sts = boto3.client('sts')
+      identity = sts.get_caller_identity()
+      args.account_id = identity['Account']
+      args.role_name = identity['Arn'].split('/')[1].split('_')[1]
+      warn(f"--role-name and --account-id not provided with --get-role-credentials, using current"
+           f" role {args.role_name} in account {args.account_id}")
     credentials = get_permission_set_credentials(access_token, args.role_name, args.account_id)
     credentials['Version'] = 1
     print(json.dumps(credentials))
@@ -464,6 +468,15 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
   permission_sets = get_permission_sets(access_token)
     
   aws_config = configparser.ConfigParser()
+  
+  if args.install_credential_process:
+    if shutil.which(EXECUTABLE_NAME) is None and not noninteractive:
+      info(f"\n{EXECUTABLE_NAME} is not in a $PATH directory.\nIf you install this application as"
+           " the credential process it is recommended you make this application executable from"
+           " $PATH so the AWS CLI and SDKs can easily find and execute this application.\n")
+      if input(f"Install {EXECUTABLE_NAME} to a local $PATH directory? [y/N]: ")[0].lower() == 'y':
+        install()
+        time.sleep(2)
   
   for profile_name, profile_data in permission_sets.items():
     section_header = f"profile {profile_name}"
