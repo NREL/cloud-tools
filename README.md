@@ -8,7 +8,7 @@ Software utilities for the NREL cloud computing user community.
 - **This script will open a new browser window or tab.** This is currently mandatory for the AD SAML authentication protocol.
 - **This script has only been tested on macOS.**
 
-Python script to automatically create an AWS SSO login token and generate ~/.aws/config file with user's SSO roles. This will also optionally generate ~/.aws/credentials for third-party AWS tools.
+Python script to automatically create an AWS SSO login token and generate ~/.aws/config file with user's SSO roles.
 
 
 Invoke with python:
