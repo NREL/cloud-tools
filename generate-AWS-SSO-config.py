@@ -41,7 +41,7 @@ AWS_SSO_CACHE_PATH  = HOME / ".aws/sso/cache"
 AWS_SSO_CACHE_FILE  = AWS_SSO_CACHE_PATH / f'{AWS_SSO_CLIENT_HASH}.json'
 AWS_CLI_CACHE_PATH  = HOME / ".aws/cli/cache"
 
-CURRENT_EXECUTABLE_PATH = sys.argv[0]
+CURRENT_EXECUTABLE_PATH = __file__
 EXECUTABLE_NAME = os.path.basename(CURRENT_EXECUTABLE_PATH)
 
 
@@ -314,6 +314,7 @@ def get_permission_set_credentials(access_token, role_name, account_id):
 
 
 def install():
+  global CURRENT_EXECUTABLE_PATH
   bin_directory_suffix = '.local/bin'
   bin_directory = HOME / bin_directory_suffix
   target_executable_path = bin_directory / EXECUTABLE_NAME
@@ -337,7 +338,7 @@ def install():
                     for path in os.getenv('PATH').split(':') ])
     if not in_path:
       SHELLRCS = {"bash": HOME/'.bashrc', "zsh": HOME/'.zshrc', "csh": HOME/'.cshrc' }
-      shell = os.getenv('SHELL')
+      shell = os.path.basename(os.getenv('SHELL'))
       if shell is not None:
         shell_string = f"The current shell detected is {shell}. "
         rc_path = SHELLRCS.get(shell, HOME/'.profile')
@@ -355,6 +356,7 @@ def install():
            f"executed with just the command:\n\t{EXECUTABLE_NAME}")
       
     target_executable_path.chmod(target_executable_path.stat().st_mode | stat.S_IEXEC)
+    CURRENT_EXECUTABLE_PATH = target_executable_path
     
     
 def uninstall():
@@ -364,16 +366,25 @@ def uninstall():
   else:
     pathlib.Path(actual_executable_path).unlink()
     info(f"Deleted {actual_executable_path}, {EXECUTABLE_NAME} is no longer in $PATH.")
-
+    
+    
+def interactive_consent(prompt):
+  input_str = input(prompt)
+  if input_str:
+    return input_str[0].lower() == 'y'
+  return False
+      
 
 def main():
+  global CURRENT_EXECUTABLE_PATH
+  
   import argparse
   parser = argparse.ArgumentParser()
   parser.add_argument("--region", '-r', type=str,
                       help=f"The AWS region to use in profiles (default is {AWS_DEFAULT_REGION})")
   parser.add_argument("--default-profile", "-p", type=str,
                       help="AWS config profile to set as the default profile in [default] section")
-  parser.add_argument("--default-output", "-o", type=str, default="json", dest="output",
+  parser.add_argument("--default-output", "-o", type=str, default="json",
                       help="Default output type to use in AWS CLI config (default is json)",
                       choices=['json', 'text', 'table'])
   parser.add_argument("--aws-config-extras", "-x", type=str, dest="extras",
@@ -440,7 +451,7 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
   sso_oidc.meta.config.region_name = args.region
       
   access_token = get_access_token(args.region)
-
+  
   if args.get_role_credentials:
     if not args.role_name or not args.account_id:
       sts = boto3.client('sts')
@@ -460,13 +471,22 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
       if noninteractive:
         fail(f"{AWS_CONFIG_PATH} already exists. Please use --force or delete this file.")
       else:
-        if input(f"{AWS_CONFIG_PATH} already exists. Overwrite? [y/N]: ")[0].lower() != 'y':
+        if not interactive_consent(f"{AWS_CONFIG_PATH} already exists. Overwrite? [y/N]: "):
           printerr(f"{AWS_CONFIG_PATH} unchanged.")
           sys.exit(1)
     
 
   permission_sets = get_permission_sets(access_token)
-    
+  
+  if args.install_credential_process:
+    if shutil.which(EXECUTABLE_NAME) is None and not noninteractive:
+      info(f"\n{EXECUTABLE_NAME} is not in a $PATH directory.\nIf you install this application as"
+           " the credential process it is recommended you make this application executable from"
+           " $PATH so the AWS CLI and SDKs can easily locate and execute this application.\n")
+      if interactive_consent(f"Install {EXECUTABLE_NAME} to a local $PATH directory? [y/N]: "):
+        install()
+        time.sleep(2)
+
   aws_config = configparser.ConfigParser()
   
   if args.install_credential_process:
@@ -483,11 +503,11 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
     aws_config.add_section(section_header)
     profile_section = aws_config[section_header]
     profile_section['region'] = args.region
-    profile_section['output'] = args.output
+    profile_section['output'] = args.default_output
     
     if args.install_credential_process:
       credential_process_body = (f'{sys.executable}'
-                                 f' {os.path.abspath(sys.argv[0])}'
+                                 f' {CURRENT_EXECUTABLE_PATH}'
                                   ' --get-role-credentials'
                                  f" --role-name {profile_data['role_name']}"
                                  f" --account-id {profile_data['aws_account_id']}")
