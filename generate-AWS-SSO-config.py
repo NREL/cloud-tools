@@ -43,6 +43,9 @@ AWS_CLI_CACHE_PATH  = HOME / ".aws/cli/cache"
 
 CURRENT_EXECUTABLE_PATH = __file__
 EXECUTABLE_NAME = os.path.basename(CURRENT_EXECUTABLE_PATH)
+BIN_DIRECTORY = pathlib.Path(os.getenv('PREFIX', HOME / '.local')) / 'bin'
+TARGET_EXECUTABLE_PATH = BIN_DIRECTORY / EXECUTABLE_NAME
+ACTUAL_EXECUTABLE_PATH = shutil.which(EXECUTABLE_NAME)
 
 
 """ Create a boto session with absolutely no authentication.
@@ -212,6 +215,7 @@ def get_permission_set_accounts(access_token):
   return (sso.get_paginator('list_accounts').paginate(accessToken=access_token)
           .build_full_result()['accountList'])
 
+
 def get_permission_sets(access_token):
   permission_sets = {}
   accounts = get_permission_set_accounts(access_token)
@@ -314,14 +318,12 @@ def get_permission_set_credentials(access_token, role_name, account_id):
 
 
 def install():
-  global CURRENT_EXECUTABLE_PATH
-  bin_directory_suffix = '.local/bin'
-  bin_directory = HOME / bin_directory_suffix
-  target_executable_path = bin_directory / EXECUTABLE_NAME
-  actual_executable_path = shutil.which(EXECUTABLE_NAME)
+  global CURRENT_EXECUTABLE_PATH, BIN_DIRECTORY, TARGET_EXECUTABLE_PATH, ACTUAL_EXECUTABLE_PATH
   
-  if actual_executable_path is not None:     # respect existing $PATH placement
-    target_executable_path = pathlib.Path(actual_executable_path)
+  if ACTUAL_EXECUTABLE_PATH is not None:     # respect existing $PATH placement
+    target_executable_path = pathlib.Path(ACTUAL_EXECUTABLE_PATH)
+  else:
+    target_executable_path = TARGET_EXECUTABLE_PATH
   
   if target_executable_path.exists():
     if os.path.getmtime(CURRENT_EXECUTABLE_PATH) > os.path.getmtime(target_executable_path):
@@ -332,9 +334,9 @@ def install():
            f"that is currently executing from {CURRENT_EXECUTABLE_PATH}\n\nNo files modified.")
     return
   else:
-    bin_directory.mkdir(parents=True, exist_ok=True)
+    BIN_DIRECTORY.mkdir(parents=True, exist_ok=True)
     shutil.copy(CURRENT_EXECUTABLE_PATH, target_executable_path)
-    in_path = any([ pathlib.Path(path).absolute() == bin_directory.absolute()
+    in_path = any([ pathlib.Path(path).absolute() == BIN_DIRECTORY.absolute()
                     for path in os.getenv('PATH').split(':') ])
     if not in_path:
       SHELLRCS = {"bash": HOME/'.bashrc', "zsh": HOME/'.zshrc', "csh": HOME/'.cshrc' }
@@ -346,10 +348,10 @@ def install():
         shell_string=''
         rc_path = HOME/'.profile'
         
-      warn(f"Installed {EXECUTABLE_NAME} to {target_executable_path} but {bin_directory} is "
+      warn(f"Installed {EXECUTABLE_NAME} to {target_executable_path} but {BIN_DIRECTORY} is "
            "not present in the $PATH environment variable."
            f"\n\n{shell_string}Please add this command to your shell initialization file {rc_path}:"
-           f"\n\nexport PATH=\"{bin_directory}:$PATH\"")
+           f"\n\nexport PATH=\"{BIN_DIRECTORY}:$PATH\"")
            
     else:
       info(f"Installed {EXECUTABLE_NAME} to {target_executable_path}\n\nThis script can now be "
@@ -360,12 +362,15 @@ def install():
     
     
 def uninstall():
-  actual_executable_path = shutil.which(EXECUTABLE_NAME)
-  if actual_executable_path is None:
-    fail(f"{EXECUTABLE_NAME} is not in $PATH. No files modified.")
+  global CURRENT_EXECUTABLE_PATH, BIN_DIRECTORY, TARGET_EXECUTABLE_PATH, ACTUAL_EXECUTABLE_PATH
+  if ACTUAL_EXECUTABLE_PATH is not None:
+    pathlib.Path(ACTUAL_EXECUTABLE_PATH).unlink()
+    info(f"Deleted {ACTUAL_EXECUTABLE_PATH}")
+  elif TARGET_EXECUTABLE_PATH.exists():
+    TARGET_EXECUTABLE_PATH.unlink()
+    info(f"Deleted {TARGET_EXECUTABLE_PATH}")
   else:
-    pathlib.Path(actual_executable_path).unlink()
-    info(f"Deleted {actual_executable_path}, {EXECUTABLE_NAME} is no longer in $PATH.")
+    fail(f"{EXECUTABLE_NAME} is not in $PATH. No files modified.")
     
     
 def interactive_consent(prompt):
