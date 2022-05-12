@@ -78,10 +78,6 @@ $cmd  --install &>/dev/null \
   || fail "Command was not installed executably" \
   && pass "Command was installed executably"
   
-$cmd  --force --default-profile $profile_name &>/dev/null \
-  || fail "Error using default profile" \
-  && pass "SSO config successfully generated using a default profile"
-  
 $executable --force --default-profile $profile_name &>/dev/null \
   && pass "SSO config successfully generated using a default profile and \$PATH executable" \
   || fail "Error using default profile and \$PATH executable"
