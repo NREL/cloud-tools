@@ -102,7 +102,7 @@ def interactive_select(options, prompt='', choice=None):
     if choice is None:
       display_packed(suboptions)
       if prompt:
-        info(prompt)
+        printerr(f"\n\033[45m{prompt}\033[0m\n\n")
         prompt = ''
       choice = input("Enter selection (index or search term): ")
       printerr()
@@ -120,10 +120,10 @@ def interactive_select(options, prompt='', choice=None):
         match = submatches[0]
         break
       else:
-        prompt = f"Multiple matches for '{choice}'\n"
+        prompt = f"Multiple matches for '{choice}'"
         suboptions = matches
     elif len(matches) < 1:
-      prompt = f"No matches for '{choice}'\n"
+      prompt = f"No matches for '{choice}'"
       suboptions = options
     else:
       match = matches[0]
@@ -385,7 +385,7 @@ def main():
   
   import argparse
   parser = argparse.ArgumentParser()
-  parser.add_argument("--region", '-r', type=str,
+  parser.add_argument("--region", type=str,
                       help=f"The AWS region to use in profiles (default is {AWS_DEFAULT_REGION})")
   parser.add_argument("--default-profile", "-p", type=str,
                       help="AWS config profile to set as the default profile in [default] section")
@@ -403,12 +403,12 @@ def main():
                               providing the full path of this script""")
   parser.add_argument("--uninstall", action='store_true',
                       help="""Uninstall this script from $PATH""")
-  parser.add_argument("--get-role-credentials", action='store_true',
+  parser.add_argument("--get-role-credentials", '-c', action='store_true',
                       help="generate role credentials for the given --role-name and --acount-id")
-  parser.add_argument("--role-name", "--role", type=str,
+  parser.add_argument("--role-name", "--role", '-r', type=str,
                       help="""The AWS SSO role to get credentials for
                               (required with --get-role-credentials)""")
-  parser.add_argument("--account-id", "--account", type=str,
+  parser.add_argument("--account-id", "--account", '-a', type=str,
                       help="""The AWS account to get credentials for
                               (required with --get-role-credentials)""")
   parser.add_argument("--install-credential-process", action='store_true',
@@ -457,14 +457,23 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
       
   access_token = get_access_token(args.region)
   
+  permission_sets = get_permission_sets(access_token)
+  
+  
   if args.get_role_credentials:
     if not args.role_name or not args.account_id:
-      sts = boto3.client('sts')
-      identity = sts.get_caller_identity()
-      args.account_id = identity['Account']
-      args.role_name = identity['Arn'].split('/')[1].split('_')[1]
-      warn(f"--role-name and --account-id not provided with --get-role-credentials, using current"
-           f" role {args.role_name} in account {args.account_id}")
+      if interactive_consent("Get credentials for current identity? [y/N]: "):
+        sts = boto3.client('sts')
+        identity = sts.get_caller_identity()
+        args.account_id = identity['Account']
+        args.role_name = identity['Arn'].split('/')[1].split('_')[1]
+      else:
+        permission_set = interactive_select([ p for p in permission_sets.keys()],
+                                            "Select a permission set")
+        args.role_name = permission_sets[permission_set]['role_name']
+        args.account_id = permission_sets[permission_set]['aws_account_id']
+    warn(f"--role-name and --account-id not provided with --get-role-credentials, using current"
+         f" role {args.role_name} in account {args.account_id}")
     credentials = get_permission_set_credentials(access_token, args.role_name, args.account_id)
     credentials['Version'] = 1
     print(json.dumps(credentials))
@@ -480,17 +489,6 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
           printerr(f"{AWS_CONFIG_PATH} unchanged.")
           sys.exit(1)
     
-
-  permission_sets = get_permission_sets(access_token)
-  
-  if args.install_credential_process:
-    if shutil.which(EXECUTABLE_NAME) is None and not noninteractive:
-      info(f"\n{EXECUTABLE_NAME} is not in a $PATH directory.\nIf you install this application as"
-           " the credential process it is recommended you make this application executable from"
-           " $PATH so the AWS CLI and SDKs can easily locate and execute this application.\n")
-      if interactive_consent(f"Install {EXECUTABLE_NAME} to a local $PATH directory? [y/N]: "):
-        install()
-        time.sleep(2)
 
   aws_config = configparser.ConfigParser()
   
