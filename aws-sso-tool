@@ -435,7 +435,7 @@ def handle_get_role_credentials_command(args):
     shell_credentials = {"AWS_ACCESS_KEY_ID": credentials['AccessKeyId'],
                          "AWS_SECRET_ACCESS_KEY": credentials['SecretAccessKey'],
                          "AWS_SESSION_TOKEN": credentials['SessionToken']}
-    print('\n'.join([f'{k}="{v}"' for k,v in shell_credentials.items()]))
+    print('\n'.join([f'{k}={v}' for k,v in shell_credentials.items()]))
     
   elif args.output == 'json':
     credentials['Version'] = 1
