@@ -11,7 +11,7 @@ info() { printf "\e[0;34m$*\e[0m\n" >&2; }
 
 __dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python="$(which python)"
-executable='generate-AWS-SSO-config.py'
+executable='aws-sso-tool'
 test_file="$__dir/../$executable"
 cmd="$python $test_file"
 start_url_hash=837d21e37cb6a685a2511a693e43e64f04d4741d
@@ -22,7 +22,7 @@ export HOME=$tmpdir
 export AWS_DEFAULT_REGION=us-west-2
 export PATH="$PWD/.local/bin:$PATH"
 
-$cmd  --force &>/dev/null \
+$cmd configure --force &>/dev/null \
   && fail "No default profile should have failed" \
   || pass "No --default-profile produced an expected error"
 
@@ -37,16 +37,19 @@ access_token_file="$HOME/.aws/sso/cache/$start_url_hash.json"
   
 access_token=$(<$access_token_file jq -r .accessToken)
 
-read account_id account_name <<<$(\
-  aws sso list-accounts --access-token $access_token --query 'accountList[0]|[accountId,accountName]' --output text
-)\
+read account_id account_name <<<$(aws sso list-accounts \
+                                    --access-token $access_token \
+                                    --query 'accountList[0]|[accountId,accountName]' \
+                                    --output text) \
   || fail "Error fetching account info" \
   && pass "SSO token valid for getting account info"
 
 
-read role_name account_id <<<$(\
-  aws sso list-account-roles --access-token $access_token --account-id $account_id --query 'roleList[0]|[roleName,accountId]' --output text
-) \
+read role_name account_id <<<$(aws sso list-account-roles \
+                                 --access-token $access_token \
+                                 --account-id $account_id \
+                                 --query 'roleList[0]|[roleName,accountId]' \
+                                 --output text) \
   || fail "Error fetching role name" \
   && pass "SSO token valid for getting role name"
   
@@ -58,15 +61,11 @@ profile_name="$account_name-$role_name"
 
 info "Using profile $profile_name"
 
-$cmd  --force --default-profile $profile_name &>/dev/null \
+$cmd configure --force --default-profile $profile_name &>/dev/null \
   || fail "Error using default profile" \
   && pass "SSO config successfully generated using a default profile"
   
-$cmd  --uninstall &>/dev/null \
-  && fail "Permature uninstall should have thrown an error" \
-  || pass "Premature uninstall produced expected error"
-  
-$cmd  --install &>/dev/null \
+$cmd --install &>/dev/null \
   || fail "Command could not install itself" \
   && pass "Command reported successful install"
   
@@ -78,11 +77,29 @@ $cmd  --install &>/dev/null \
   || fail "Command was not installed executably" \
   && pass "Command was installed executably"
   
-$executable --force --default-profile $profile_name &>/dev/null \
+set +o pipefail
+$executable --help 2>&1 | grep config &>/dev/null \
+  && pass "Subcommandless --help works" \
+  || fail "Subcommandless --help failed"
+  
+$executable -h 2>&1 | grep config &>/dev/null \
+  && pass "Subcommandless -h works" \
+  || fail "Subcommandless -h failed"
+set -o pipefail
+
+$executable --version &>/dev/null \
+  && pass "--version works" \
+  || fail "--version failed"
+  
+$executable bad-subcommand 2>&1 | grep config &>/dev/null \
+  && fail "Unsupported subcommand should have returned an error" \
+  || pass "Unsupported subcommand returned an error"
+  
+$executable configure --force --default-profile $profile_name &>/dev/null \
   && pass "SSO config successfully generated using a default profile and \$PATH executable" \
   || fail "Error using default profile and \$PATH executable"
   
-$executable --get-role-credentials --role-name $role_name --account-id $account_id &>/dev/null \
+$executable get-role-credentials --role-name $role_name --account-id $account_id &>/dev/null \
   && pass "$executable was able to fetch role credentials for $role_name in $account_id" \
   || fail "Unable to fetch role credentials for $role_name in $account_id"
   
@@ -97,7 +114,7 @@ aws sts get-caller-identity &>/dev/null \
   
 mv ~/.aws/sso/cache/$start_url_hash.json.bk ~/.aws/sso/cache/$start_url_hash.json
 
-$executable --force --default-profile $profile_name --install-credential-process &>/dev/null \
+$executable configure --force --default-profile $profile_name --install-credential-process &>/dev/null \
   && pass "Successfully created config with $executable as the credential process" \
   || fail "Unable to create config with $executable as the credential process"
   
@@ -115,11 +132,23 @@ aws sts get-caller-identity &>/dev/null \
 grep $profile_name ~/.aws/credentials &>/dev/null  \
   && pass "$profile_name cached credentials found in ~/.aws/credentials after CLI command" \
   || fail "$profile_name should have cached credentials in ~/.aws/credentials but none were found"
+  
+$executable get-role-credentials --current --output json | grep SecretAccessKey &>/dev/null \
+  && pass "$executable get-role-credentials returned credentials in json format" \
+  || fail "$executable get-role-credentials did not return credentials in json format" \
+  
+$executable get-role-credentials --current --output shell | grep AWS_SECRET_ACCESS_KEY &>/dev/null \
+  && pass "$executable get-role-credentials returned credentials in shell format" \
+  || fail "$executable get-role-credentials did not return credentials in shell format" \
 
-$cmd  --uninstall &>/dev/null \
+$executable --uninstall &>/dev/null \
   || fail "Command should have uninstalled successfully" \
   && pass "Command reported successful uninstall"
 
 [ -f ~/.local/bin/$executable ] \
   && fail "Command was not actually uninstalled" \
   || pass "Command was actually uninstalled"
+  
+$cmd --uninstall &>/dev/null \
+  && fail "Double uninstall should have thrown an error" \
+  || pass "Double uninstall produced expected error"
