@@ -570,7 +570,7 @@ def main():
   parser.add_argument('-v','--version', action='version', version=__version__,
                       help='show version and exit')
   parser.add_argument("--install", action='store_true',
-                      help="""Attempt to install this script to $PATH so it can executed without
+                      help="""Attempt to install this script to $PATH so it can be executed without
                               providing the full path of this script""")
   parser.add_argument("--uninstall", action='store_true',
                       help="Uninstall this script from $PATH")
