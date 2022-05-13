@@ -85,6 +85,14 @@ $executable --help 2>&1 | grep config &>/dev/null \
 $executable -h 2>&1 | grep config &>/dev/null \
   && pass "Subcommandless -h works" \
   || fail "Subcommandless -h failed"
+  
+$executable configure --help 2>&1 | grep -i 'generate an AWS SSO compatible ~/.aws/config' &>/dev/null \
+  && pass "$executable configure --help works" \
+  || fail "$executable configure --help failed"
+  
+$executable get-role-credentials --help 2>&1 | grep -i 'access credentials for a permission set' &>/dev/null \
+  && pass "$executable get-role-credentials --help works" \
+  || fail "$executable get-role-credentials --help failed"
 set -o pipefail
 
 $executable --version &>/dev/null \
