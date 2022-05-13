@@ -432,7 +432,7 @@ def handle_get_role_credentials_command(args):
   credentials = get_permission_set_credentials(access_token, args.role_name, args.account_id)
   
   if args.output == 'shell':
-    shell_credentials = { "AWS_ACCESS_KEY_ID": credentials['AccessKeyId'],
+    shell_credentials = {"AWS_ACCESS_KEY_ID": credentials['AccessKeyId'],
                          "AWS_SECRET_ACCESS_KEY": credentials['SecretAccessKey'],
                          "AWS_SESSION_TOKEN": credentials['SessionToken']}
     print('\n'.join([f'{k}="{v}"' for k,v in shell_credentials.items()]))
