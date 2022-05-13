@@ -196,6 +196,6 @@ $ aws --profile nrel-aws-account3-Permission-Set-1 sts get-caller-identity
 
 ### Tests
 
-Execute [.tests/test-generate-AWS-SSO-config.sh](./.tests/test-generate-AWS-SSO-config.sh)
+Execute [.tests/test-aws-sso-tool.sh](./.tests/test-aws-sso-tool.sh)
 
 Each line of output should start with a green checkmark, any red X's indicates the code is not working as intended.
