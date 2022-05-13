@@ -1,43 +1,43 @@
 # NREL Cloud Computing Tools
 Software utilities for the NREL cloud computing user community.
 
-## [generate-AWS-SSO-config.py](generate-AWS-SSO-config.py)
+## [aws-sso-tool](aws-sso-tool)
 
 
 - **This script requires the `boto3` python AWS SDK library be installed.** Install with `pip install boto3`
 - **This script will open a new browser window or tab.** This is currently mandatory for the AD SAML authentication protocol.
 - **This script has only been tested on macOS.**
 
-Python script to automatically create an AWS SSO login token and generate ~/.aws/config file with user's SSO roles.
+Python script to help automate the AWS SSO CLI experience. It can automatically create an AWS SSO login token and generate ~/.aws/config file with user's SSO roles, as well as fetch credentials for a user's permission sets interactively.
 
 
 Invoke with python:
 ```
-python generate-AWS-SSO-config.py --help
+python aws-sso-tool --help
 ```
 
  or as an executable:
  
  ```
- chmod +x generate-AWS-SSO-config.py
- ./generate-AWS-SSO-config.py --help
+ chmod +x aws-sso-tool
+ ./aws-sso-tool --help
  ```
  
 Install the script to $PATH automatically to invoke by name:
  ```
-$ ./generate-AWS-SSO-config.py --install
-Installed generate-AWS-SSO-config.py to ~/.local/bin/generate-AWS-SSO-config.py
+$ ./aws-sso-tool --install
+Installed aws-sso-tool to ~/.local/bin/aws-sso-tool
 
 This script can now be executed with just the command:
-        generate-AWS-SSO-config.py
+        aws-sso-tool
         
-$ generate-AWS-SSO-config.py --help
+$ aws-sso-tool --help
 ```
 
 And uninstall as desired:
 ```
-$ generate-AWS-SSO-config.py --uninstall
-Deleted ~/.local/bin/generate-AWS-SSO-config.py, generate-AWS-SSO-config.py is no longer in $PATH.
+$ aws-sso-tool --uninstall
+Deleted ~/.local/bin/aws-sso-tool, aws-sso-tool is no longer in $PATH.
 ```
 
 ### Basic Usage
@@ -49,7 +49,7 @@ Basic SSO support enables the user to run `aws sso login` from the terminal to i
 With no arguments the user will be prompted to interactively provide required information:
 
 ```
-$ generate-AWS-SSO-config.py
+$ aws-sso-tool configure
 
 ~/.aws/config already exists. Overwrite? [y/N]: y
 
@@ -68,7 +68,7 @@ Wrote SSO permission set profiles to ~/.aws/config.
 Alternatively the user may provide necessary information as CLI flags. The fully-defined CLI equivalent to the above session would be:
 
 ```
-$ generate-AWS-SSO-config.py --region us-west-2 --default-profile nrel-aws-account2-Permission-Set-2 --force
+$ aws-sso-tool configure --region us-west-2 --default-profile nrel-aws-account2-Permission-Set-2 --force
 
 Using nrel-aws-account2-Permission-Set-2 as the default AWS profile.
 Wrote SSO permission set profiles to ~/.aws/config.
@@ -83,6 +83,43 @@ $ aws --profile nrel-aws-account3-Permission-Set-1 sts get-caller-identity
     "Arn": "arn:aws:sts::333333333333:assumed-role/AWSReservedSSO_Permission-Set-1_ffffffffffffc6ec/username@nrel.gov"
 }
 ```
+
+See `aws-sso-tool configure --help` for more usage information.
+
+#### Get temporary access credentials for a permission set
+
+To interactively get credentials simply run `aws-sso-tool get-role-credentials` or more succinctly `aws-sso-tool credentials`:
+
+```
+$ aws-sso-tool get-role-credentials --output shell
+--region not provided, using default region us-west-2
+Using cached SSO access token
+1) nrel-aws-account1-Permission-Set-1        2) nrel-aws-account2-Permission-Set-1
+3) nrel-aws-account2-Permission-Set-2        4) nrel-aws-account2-Permission-Set-3
+5) nrel-aws-account3-Permission-Set-1
+
+Select which permission set to get credentials for
+
+
+Enter selection (index or search term): set-1
+
+1) nrel-aws-account1-Permission-Set-1        2) nrel-aws-account2-Permission-Set-1
+3) nrel-aws-account3-Permission-Set-1
+
+Multiple matches for 'set-1'
+
+
+Enter selection (index or search term): 2
+
+Getting credentials for Permission-Set-1 in account 222222222222
+
+AWS_ACCESS_KEY_ID="ASIAXXXXXXXXXXXX..."
+AWS_SECRET_ACCESS_KEY="huJhXXXXXXXXXXXXXXX..."
+AWS_SESSION_TOKEN="IQoJXXXXXXXXXXXXXXX..."
+```
+
+See `aws-sso-tool get-role-credentials --help` for more usage information.
+
 
 ### Advanced Usage
 
@@ -105,7 +142,7 @@ In other words, this script (when installed as the `credential_process` option) 
 Please see https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html for more information.
                               
 ```
-$ generate-AWS-SSO-config.py --install-credential-process
+$ aws-sso-tool configure --install-credential-process
 ```
 
 Then examine ~/.aws/config:
@@ -115,7 +152,7 @@ $ head ~/.aws/config
 [profile nrel-aws-account1-Permission-Set-1]
 region = us-west-2
 output = json
-credential_process = ~/.local/bin/generate-AWS-SSO-config.py --get-role-credentials --role-name Permission-Set-1 --account-id 111111111111
+credential_process = ~/.local/bin/aws-sso-tool get-role-credentials --role-name Permission-Set-1 --account-id 111111111111
 
 ...
 ```
