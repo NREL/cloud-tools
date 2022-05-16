@@ -23,7 +23,7 @@ python aws-sso-tool --help
  ./aws-sso-tool --help
  ```
  
-Install the script to $PATH automatically to invoke by name:
+Install the script to $PATH invoke by name without a directory path:
  ```
 $ ./aws-sso-tool --install
 Installed aws-sso-tool to ~/.local/bin/aws-sso-tool
