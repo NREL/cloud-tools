@@ -156,7 +156,7 @@ credential_process = ~/.local/bin/aws-sso-tool get-role-credentials --role-name 
 
 ...
 ```
-Notice this script is used as the `credential_process` command. Also notice there are no `sso_*` attributes under the profiles. This is because providing the `sso_*` attributes trigger the AWS CLI to use its built in AWS SSO authentication processes. This causes the `credential_process` command to be ignored, hence they are not included in the generate AWS config if the `--install-credential-process` flag is provided.
+Notice this script is used as the `credential_process` command. Also notice there are no `sso_*` attributes under the profiles. This is because providing the `sso_*` attributes trigger the AWS CLI to use its built in AWS SSO authentication processes. This causes the `credential_process` command to be ignored, hence they are not included in the generated AWS config if the `--install-credential-process` flag is provided.
 
 Now when using expired credentials, the AWS CLI will automatically renew credentials that are expired:
 
