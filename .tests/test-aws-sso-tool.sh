@@ -61,7 +61,7 @@ profile_name="$account_name-$role_name"
 
 info "Using profile $profile_name"
 
-$cmd configure --force --default-profile $profile_name &>/dev/null \
+$cmd configure --force --default-profile $profile_name >/dev/null \
   || fail "Error using default profile" \
   && pass "SSO config successfully generated using a default profile"
   
@@ -103,6 +103,12 @@ $executable bad-subcommand 2>&1 | grep config &>/dev/null \
   && fail "Unsupported subcommand should have returned an error" \
   || pass "Unsupported subcommand returned an error"
   
+nickname=${profile_name#nrel-aws-*}
+$executable configure --nickname 'nrel-aws-(.+)=\1' --force --default-profile $profile_name &>/dev/null
+aws sts --profile $nickname get-caller-identity &>/dev/null \
+  && pass "--nickname generated profile named $nickname" \
+  || fail "Profile '$nickname' not found, --nickname is broken"
+  
 $executable configure --force --default-profile $profile_name &>/dev/null \
   && pass "SSO config successfully generated using a default profile and \$PATH executable" \
   || fail "Error using default profile and \$PATH executable"
@@ -126,7 +132,7 @@ $executable configure --force --default-profile $profile_name --install-credenti
   && pass "Successfully created config with $executable as the credential process" \
   || fail "Unable to create config with $executable as the credential process"
   
-grep 'sso_start_url' ~/.aws/config \
+grep 'sso_start_url' ~/.aws/config >/dev/null \
   && fail "--install-credential-process should result in no sso_* attributes in ~/.aws/config" \
   || pass "sso_* config attributes expectedly not in ~/.aws/config after --install-credential-process"
   

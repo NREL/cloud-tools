@@ -19,6 +19,7 @@ import itertools
 import json
 import os
 import pathlib
+import re
 import shutil
 import stat
 import sys
@@ -26,7 +27,7 @@ import time
 import webbrowser
 
 
-__version__ = '1.0'
+__version__ = '1.1'
 __INTERACTIVE__ = False
 
 
@@ -160,6 +161,8 @@ def create_access_token():
   
   webbrowser.open_new_tab(verification_uri)
   
+  info(f"Awaiting authorization from {verification_uri}", end='')
+  
   for retry in range(120):    # sso_oidc.waiter_names is an empty list so can't use .wait()
     try:
       token_response = sso_oidc.create_token(clientId      = client_id,
@@ -173,6 +176,8 @@ def create_access_token():
       continue
   else:
     raise TimeoutError("Script timed out awaiting a valid access token.")
+  
+  printerr(f"\r\033[2K", end='')
   
   access_token = token_response['accessToken']
   expiration_time = ( datetime.datetime.now(datetime.timezone.utc)
@@ -385,7 +390,18 @@ def interactive_consent(prompt):
   if input_str:
     return input_str[0].lower() == 'y'
   return False
-      
+
+
+def split_key_value_pair_args(args):
+  key_values = {}
+  for pair in args.split(','):
+    try:
+      key, value = pair.split('=')
+    except ValueError:
+      continue
+    key_values[key] = value
+  return key_values
+
       
 def handle_get_role_credentials_command(args):
   parser = argparse.ArgumentParser(prog=f"{EXECUTABLE_NAME} get-role-credentials",
@@ -455,12 +471,17 @@ def handle_configure_command(args):
   parser.add_argument("--default-output", "-o", type=str, default="json",
                       help="Default output type to use in AWS CLI config (default is json)",
                       choices=['json', 'text', 'table'])
+  parser.add_argument("--force", '-f', action='store_true',
+                      help="Overwrite AWS user config files without asking")
+  parser.add_argument("--nickname", '-n', type=str,
+                      help="""Comma-separated 'key=value' list of regex subs for profile nicknames.
+                              e.g. `--nickname 'nrel-aws-(.+)=\1'` would create profile aliases that
+                              do not have the 'nrel-aws-' prefix, intended to make specifying these 
+                              profiles easier in the CLI and SDKs.""")
   parser.add_argument("--aws-config-extras", "-x", type=str, dest="extras",
                       help="""Comma-separate 'key=value' list of extra config options to write to
                               AWS CLI config. Example:
                               cli_follow_urlparam=false,aws_cli_auto_prompt=on-partial""")
-  parser.add_argument("--force", '-f', action='store_true',
-                      help="Overwrite AWS user config files without asking")
   parser.add_argument("--install-credential-process", action='store_true',
                       help="""Use this script as the `credential_process` option in the AWS
                               configuration profiles. This script will automatically create a new
@@ -472,8 +493,13 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
                               for more information.""")
   args = parser.parse_args(args)
 
+  if args.nickname:
+    args.nickname = split_key_value_pair_args(args.nickname)
+  else:
+    args.nickname = {}
+
   if args.extras:
-      args.extras = {(parts := pair.split('='))[0] : parts[1] for pair in args.extras.split(',')}
+      args.extras = split_key_value_pair_args(args.extras)
       verbose("Got extra profiles attributes: "
               f"{' '.join([f'{k}={v}' for k,v in args.extras.items()])}")
   else:
@@ -510,6 +536,26 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
       if input(f"Install {EXECUTABLE_NAME} to a local $PATH directory? [y/N]: ")[0].lower() == 'y':
         install()
         time.sleep(2)
+        
+  for source_pattern, target_pattern in args.nickname.items():
+    
+    nickname_regex = re.compile(source_pattern)
+    
+    for permission_set_name in list(permission_sets.keys()):
+      
+      if (match := nickname_regex.match(permission_set_name)) is None:
+        continue
+      
+      permission_set_nickname = nickname_regex.sub(target_pattern, permission_set_name)
+
+      if permission_sets.get(permission_set_nickname) is not None:
+        warn(f"Transforming {source_pattern}->{target_pattern} matched existing profile"
+             f" '{permission_set_nickname}', skipping.")
+        continue
+        
+      permission_sets[permission_set_nickname] = permission_sets[permission_set_name]
+      verbose(f"Nicknamed {permission_set_name} -> {permission_set_nickname}")
+
   
   for profile_name, profile_data in permission_sets.items():
     section_header = f"profile {profile_name}"
@@ -541,6 +587,8 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
     fail("No default profile specified."
          " Please use --default-profile to specify any of the following profiles as default:"
          f"\n{' '.join(permission_sets.keys())}")
+  
+  
   
   default_profile = interactive_select(list(permission_sets.keys()),
                                        prompt='Select a default profile',
