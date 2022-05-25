@@ -123,6 +123,15 @@ See `aws-sso-tool get-role-credentials --help` for more usage information.
 
 ### Advanced Usage
 
+#### Use a custom browser to authenticate
+
+By default, [`aws-sso-tool`](./aws-sso-tool) will open the authorization URL to complete logging into AWS SSO via SAML the user's default browser. The user can either provide `--no-browser` to avoid opening any browser (leaving the user to manually copy and paste the authorization URL), or the user can provide a CLI command string to the `--browser` argument and `aws-sso-tool` will execute the CLI command with the verification URL as an argument.
+
+For example, to make `aws-sso-tool` complete the authorization in an incognito Chrome window to avoid any login caching, the user can run this on macOS:
+```
+$ aws-sso-tool config --browser "open -a 'Google Chrome' --args --incognito"
+
+
 #### Adding profile nicknames/aliases
 
 If you use the CLI with multiple accounts, typing out the full profile names can become tedious (even with shell completions). It's possible to instruct [`aws-sso-tool`](./aws-sso-tool) to generate nicknames for certain profiles with the `--nickname` flag to the `configure` subcommand.

@@ -20,8 +20,10 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import stat
+import subprocess
 import sys
 import time
 import webbrowser
@@ -160,8 +162,10 @@ def create_access_token():
   device_code = start_authorization_response['deviceCode']
   verification_uri = start_authorization_response['verificationUriComplete']
   
-  if __BROWSER:
+  if __BROWSER is True:
     webbrowser.open_new_tab(verification_uri)
+  elif isinstance(__BROWSER, str):
+    subprocess.run(shlex.split(f"{__BROWSER} {verification_uri}"))
   
   info(f"Awaiting authorization from {verification_uri}", end='')
   
@@ -619,12 +623,16 @@ def main():
   parser.add_argument('command', nargs='?', choices=command_map.keys(), help="command to run")
   parser.add_argument('-v','--version', action='version', version=__version__,
                       help='show version and exit')
-  parser.add_argument("--no-browser", '-B', action='store_true',
+  parser.add_argument("--no-browser", action='store_false', dest="browser",
                       help="""DON'T automatically open the user's default browser to authenticate.
                               The device authorization URL will be printed to the terminal so the
-                              user can open the URL in the browser of their choosing. \033[1mUse
-                              this option if you need to authenticate in a private window\033[0m.
-                              """)
+                              user can open the URL in the browser of their choosing.""")
+  parser.add_argument("--browser", '-b', type=str, dest="browser",
+                      help=f"""By default {EXECUTABLE_NAME} will open the user's default browser to
+                               complete SAML authorization. This flag allows the user to specify an
+                               alternative CLI command to open the URL with. \033[1mUse
+                               this option if you need to authenticate in a private window\033[0m.
+                               """)
   parser.add_argument("--no-cache", '-C', action='store_true',
                       help="DON'T use any cached credentials, i.e. force fresh authentication.")
   parser.add_argument("--install", action='store_true',
@@ -634,9 +642,13 @@ def main():
                       help="Uninstall this script from $PATH")
   command_args, remaining_args = parser.parse_known_args()
   
-  if command_args.no_browser:
-    global __BROWSER
+  global __BROWSER
+  if command_args.browser is False:
     __BROWSER = False
+  elif isinstance(command_args.browser, str):
+    __BROWSER = command_args.browser
+  else:
+    __BROWSER = True
   
   if command_args.no_cache:
     global get_cached_access_token, get_cached_permission_set_credentials
@@ -665,6 +677,7 @@ def main():
     # Throw errors instead of prompting for user input
     global interactive_select, noninteractive_select
     interactive_select = noninteractive_select
+    
 
   command_map[command_args.command](remaining_args)
 
