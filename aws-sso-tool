@@ -86,6 +86,10 @@ def info(s, **kwargs): printerr(f"\033[36m{s}\033[0m", **kwargs)
 def verbose(s, **kwargs): warn(s, **kwargs)
 
 
+def json_minify(j):
+  return json.dumps(j, sort_keys=True, separators=(',', ':'))
+
+
 def map_multithreaded(function, iterator, workers=10):
   with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
     return [ future.result() for future in
@@ -194,10 +198,10 @@ def create_access_token():
 def cache_access_token(access_token, expiration_time, region):
   AWS_SSO_CACHE_PATH.mkdir(parents=True, exist_ok=True)
   with AWS_SSO_CACHE_FILE.open('w') as cache_file:
-    cache_file.write( json.dumps( {'accessToken': access_token,
-                                   'expiresAt':   expiration_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                   'region':      region,
-                                   'startUrl':    AWS_SSO_START_URL} ) )
+    cache_file.write( json_minify( {'accessToken': access_token,
+                                    'expiresAt':   expiration_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                    'region':      region,
+                                    'startUrl':    AWS_SSO_START_URL} ) )
 
 
 def get_cached_access_token():
@@ -283,7 +287,7 @@ def create_permission_set_credentials(access_token, role_name, account_id):
 def get_permission_set_credentials_hash_key(role_name, account_id):
   # cache key logic from botocore.credentials.SSOCredentialFetcher._create_cache_key
   profile = {'startUrl': AWS_SSO_START_URL, 'roleName': role_name, 'accountId': account_id}
-  profile_serialized = json.dumps(profile, sort_keys=True, separators=(',', ':'))
+  profile_serialized = json_minify(profile)
   return hashlib.sha1(profile_serialized.encode('utf-8')).hexdigest()
   
   
@@ -293,7 +297,7 @@ def cache_permission_set_credentials(access_token, role_name, account_id, creden
   AWS_CLI_CACHE_PATH.mkdir(parents=True, exist_ok=True)
   aws_cli_cache_file = AWS_CLI_CACHE_PATH / f'{profile_hash}.json'
   with aws_cli_cache_file.open('w') as cache_file:
-    cache_file.write(json.dumps(profile_credentials))
+    cache_file.write(json_minify(profile_credentials))
     
   # Also cache credentials to ~/.aws/credentials to avoid CLI tools not supporting SSO based auth
   accounts = get_permission_set_accounts(access_token)
@@ -461,7 +465,7 @@ def handle_get_role_credentials_command(args):
     
   elif args.output == 'json':
     credentials['Version'] = 1
-    print(json.dumps(credentials))
+    print(json_minify(credentials), end='')
     
   return
   
@@ -563,6 +567,29 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
       verbose(f"Nicknamed {permission_set_name} -> {permission_set_nickname}")
 
   
+  if args.install_credential_process:
+    credential_process_args = [sys.executable, CURRENT_EXECUTABLE_PATH, 'get-role-credentials',
+                               "--role-name {role_name}",
+                               "--account-id {account_id}",
+                               "--output json"]
+    if isinstance(__BROWSER, str):
+      credential_process_args.append(f"--browser {shlex.quote(__BROWSER)}")
+    credential_process_body = ' '.join(credential_process_args)
+    
+    def _populate_profile_block(account_id, role_name):
+      profile_section['credential_process'] = credential_process_body.format(account_id=account_id,
+                                                                             role_name=role_name)
+  
+  else:
+    # sso_* profile attributes override credential_process attribute, they are mutually exclusive
+    
+    def _populate_profile_block(account_id, role_name):
+      profile_section['sso_start_url']  = AWS_SSO_START_URL
+      profile_section['sso_account_id'] = account_id
+      profile_section['sso_role_name']  = role_name
+      profile_section['sso_region']     = args.region
+  
+  
   for profile_name, profile_data in permission_sets.items():
     section_header = f"profile {profile_name}"
     aws_config.add_section(section_header)
@@ -570,20 +597,7 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
     profile_section['region'] = args.region
     profile_section['output'] = args.default_output
     
-    if args.install_credential_process:
-      credential_process_body = (f'{sys.executable}'
-                                 f' {CURRENT_EXECUTABLE_PATH} get-role-credentials'
-                                 f" --role-name {profile_data['role_name']}"
-                                 f" --account-id {profile_data['aws_account_id']}"
-                                 f" --output json")
-      profile_section['credential_process'] = credential_process_body
-      
-    else:
-      # sso_* profile attributes override credential_process attribute, they are mutually exclusive
-      profile_section['sso_start_url']  = AWS_SSO_START_URL
-      profile_section['sso_account_id'] = profile_data['aws_account_id']
-      profile_section['sso_role_name']  = profile_data['role_name']
-      profile_section['sso_region']     = args.region
+    _populate_profile_block(profile_data['aws_account_id'], profile_data['role_name'])
       
     for k,v in args.extras.items():
       profile_section[k] = v
@@ -593,7 +607,6 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
     fail("No default profile specified."
          " Please use --default-profile to specify any of the following profiles as default:"
          f"\n{' '.join(permission_sets.keys())}")
-  
   
   
   default_profile = interactive_select(list(permission_sets.keys()),
