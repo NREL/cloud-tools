@@ -169,7 +169,9 @@ def create_access_token():
   if __BROWSER is True:
     webbrowser.open_new_tab(verification_uri)
   elif isinstance(__BROWSER, str):
-    subprocess.run(shlex.split(f"{__BROWSER} {verification_uri}"))
+    subprocess.run(shlex.split(f"{__BROWSER} {verification_uri}"),
+                   stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL)
   
   info(f"Awaiting authorization from {verification_uri}", end='')
   
@@ -278,10 +280,11 @@ def create_permission_set_credentials(access_token, role_name, account_id):
   expiration_iso = (datetime.datetime
                     .utcfromtimestamp(role_credentials['expiration']/1000)
                     .strftime("%Y-%m-%dT%H:%M:%SZ"))
-  return {"AccessKeyId":     role_credentials['accessKeyId'],
-          "SecretAccessKey": role_credentials['secretAccessKey'],
-          "SessionToken":    role_credentials['sessionToken'],
-          "Expiration":      expiration_iso}
+  credential_json = {"AccessKeyId":     role_credentials['accessKeyId'],
+                     "SecretAccessKey": role_credentials['secretAccessKey'],
+                     "SessionToken":    role_credentials['sessionToken'],
+                     "Expiration":      expiration_iso}
+  return credential_json
 
 
 def get_permission_set_credentials_hash_key(role_name, account_id):
