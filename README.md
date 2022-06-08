@@ -129,7 +129,7 @@ By default, [`aws-sso-tool`](./aws-sso-tool) will open the authorization URL to 
 
 For example, to make `aws-sso-tool` complete the authorization in an incognito Chrome window to avoid any login caching, the user can run this on macOS:
 ```
-$ aws-sso-tool config --browser "open -a 'Google Chrome' --args --incognito"
+$ aws-sso-tool config --browser '/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --incognito'
 
 
 #### Adding profile nicknames/aliases
