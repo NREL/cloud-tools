@@ -130,6 +130,7 @@ By default, [`aws-sso-tool`](./aws-sso-tool) will open the authorization URL to 
 For example, to make `aws-sso-tool` complete the authorization in an incognito Chrome window to avoid any login caching, the user can run this on macOS:
 ```
 $ aws-sso-tool config --browser '/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --incognito'
+```
 
 
 #### Adding profile nicknames/aliases
@@ -139,15 +140,19 @@ If you use the CLI with multiple accounts, typing out the full profile names can
 `--nickname` accepts a comma-separated list of match=transform mappings of regex substitution patterns.
 
 For example, most NREL AWS accounts begin with `nrel-aws`, so it may be redundant to have to type this token every time a profile is specified. If you want to generate a nicknamed profile for each of your permission sets without this prefix, you could run:
+
 ```
 $ aws-sso-tool config --nickname 'nrel-aws-(.+)=\1'
 ```
+
 Where `\1` is standard regex syntax to match the first match group within `()`. Fork example, after running this command, we can use either `nrel-aws-ace-Developers` or the alias `ace-Developers`. 
 
 As another example, if you have access to the `Developer` pemrission set in multiple accounts and you want it to be the default for that account, you could run: 
+
 ```
 $ aws-sso-tool config --nickname '(.+)-Developer=\1'
 ```
+
 This would make an alias of `nrel-aws-ace` for `nrel-aws-ace-Developer`.
 
 To specify both of these regex substitutions, you can run:
