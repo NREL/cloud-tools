@@ -473,7 +473,7 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
   args = parser.parse_args(args)
 
   if args.extras:
-      args.extras = {(parts := pair.split('='))[0] : parts[1] for pair in args.extras.split(',')}
+      args.extras = { k: v for pair in args.extras.split(',') for k, v in [pair.split('=')] }
       verbose("Got extra profiles attributes: "
               f"{' '.join([f'{k}={v}' for k,v in args.extras.items()])}")
   else:
