@@ -19,16 +19,20 @@ import itertools
 import json
 import os
 import pathlib
+import re
+import shlex
 import shutil
 import stat
+import subprocess
 import sys
 import time
 import webbrowser
 
 
-__version__ = '1.0'
-__INTERACTIVE__ = False
+__version__ = '1.1'
 
+__INTERACTIVE = False
+__BROWSER = True
 
 AWS_DEFAULT_REGION  = 'us-west-2'
 
@@ -80,6 +84,10 @@ def fail(s, **kwargs): printerr(f"\033[31m{s}\033[0m", **kwargs); sys.exit(1)
 def warn(s, **kwargs): printerr(f"\033[33m{s}\033[0m", **kwargs)
 def info(s, **kwargs): printerr(f"\033[36m{s}\033[0m", **kwargs)
 def verbose(s, **kwargs): warn(s, **kwargs)
+
+
+def json_minify(j):
+  return json.dumps(j, sort_keys=True, separators=(',', ':'))
 
 
 def map_multithreaded(function, iterator, workers=10):
@@ -158,7 +166,14 @@ def create_access_token():
   device_code = start_authorization_response['deviceCode']
   verification_uri = start_authorization_response['verificationUriComplete']
   
-  webbrowser.open_new_tab(verification_uri)
+  if __BROWSER is True:
+    webbrowser.open_new_tab(verification_uri)
+  elif isinstance(__BROWSER, str):
+    subprocess.run(shlex.split(f"{__BROWSER} {verification_uri}"),
+                   stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL)
+  
+  info(f"Awaiting authorization from {verification_uri}", end='')
   
   for retry in range(120):    # sso_oidc.waiter_names is an empty list so can't use .wait()
     try:
@@ -174,6 +189,8 @@ def create_access_token():
   else:
     raise TimeoutError("Script timed out awaiting a valid access token.")
   
+  printerr(f"\r\033[2K", end='')
+  
   access_token = token_response['accessToken']
   expiration_time = ( datetime.datetime.now(datetime.timezone.utc)
                       + datetime.timedelta(0, token_response['expiresIn']) )
@@ -183,10 +200,10 @@ def create_access_token():
 def cache_access_token(access_token, expiration_time, region):
   AWS_SSO_CACHE_PATH.mkdir(parents=True, exist_ok=True)
   with AWS_SSO_CACHE_FILE.open('w') as cache_file:
-    cache_file.write( json.dumps( {'accessToken': access_token,
-                                   'expiresAt':   expiration_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                   'region':      region,
-                                   'startUrl':    AWS_SSO_START_URL} ) )
+    cache_file.write( json_minify( {'accessToken': access_token,
+                                    'expiresAt':   expiration_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                    'region':      region,
+                                    'startUrl':    AWS_SSO_START_URL} ) )
 
 
 def get_cached_access_token():
@@ -263,16 +280,17 @@ def create_permission_set_credentials(access_token, role_name, account_id):
   expiration_iso = (datetime.datetime
                     .utcfromtimestamp(role_credentials['expiration']/1000)
                     .strftime("%Y-%m-%dT%H:%M:%SZ"))
-  return {"AccessKeyId":     role_credentials['accessKeyId'],
-          "SecretAccessKey": role_credentials['secretAccessKey'],
-          "SessionToken":    role_credentials['sessionToken'],
-          "Expiration":      expiration_iso}
+  credential_json = {"AccessKeyId":     role_credentials['accessKeyId'],
+                     "SecretAccessKey": role_credentials['secretAccessKey'],
+                     "SessionToken":    role_credentials['sessionToken'],
+                     "Expiration":      expiration_iso}
+  return credential_json
 
 
 def get_permission_set_credentials_hash_key(role_name, account_id):
   # cache key logic from botocore.credentials.SSOCredentialFetcher._create_cache_key
   profile = {'startUrl': AWS_SSO_START_URL, 'roleName': role_name, 'accountId': account_id}
-  profile_serialized = json.dumps(profile, sort_keys=True, separators=(',', ':'))
+  profile_serialized = json_minify(profile)
   return hashlib.sha1(profile_serialized.encode('utf-8')).hexdigest()
   
   
@@ -282,7 +300,7 @@ def cache_permission_set_credentials(access_token, role_name, account_id, creden
   AWS_CLI_CACHE_PATH.mkdir(parents=True, exist_ok=True)
   aws_cli_cache_file = AWS_CLI_CACHE_PATH / f'{profile_hash}.json'
   with aws_cli_cache_file.open('w') as cache_file:
-    cache_file.write(json.dumps(profile_credentials))
+    cache_file.write(json_minify(profile_credentials))
     
   # Also cache credentials to ~/.aws/credentials to avoid CLI tools not supporting SSO based auth
   accounts = get_permission_set_accounts(access_token)
@@ -385,7 +403,18 @@ def interactive_consent(prompt):
   if input_str:
     return input_str[0].lower() == 'y'
   return False
-      
+
+
+def split_key_value_pair_args(args):
+  key_values = {}
+  for pair in args.split(','):
+    try:
+      key, value = pair.split('=')
+    except ValueError:
+      continue
+    key_values[key] = value
+  return key_values
+
       
 def handle_get_role_credentials_command(args):
   parser = argparse.ArgumentParser(prog=f"{EXECUTABLE_NAME} get-role-credentials",
@@ -418,7 +447,7 @@ def handle_get_role_credentials_command(args):
     args.role_name = identity['Arn'].split('/')[1].split('_')[1]
   
   if not args.role_name or not args.account_id:
-    if __INTERACTIVE__:
+    if __INTERACTIVE:
       permission_sets = get_permission_sets(access_token)
       permission_set = interactive_select([ p for p in permission_sets.keys()],
                                           "Select which permission set to get credentials for")
@@ -439,7 +468,7 @@ def handle_get_role_credentials_command(args):
     
   elif args.output == 'json':
     credentials['Version'] = 1
-    print(json.dumps(credentials))
+    print(json_minify(credentials), end='')
     
   return
   
@@ -455,12 +484,17 @@ def handle_configure_command(args):
   parser.add_argument("--default-output", "-o", type=str, default="json",
                       help="Default output type to use in AWS CLI config (default is json)",
                       choices=['json', 'text', 'table'])
+  parser.add_argument("--force", '-f', action='store_true',
+                      help="Overwrite AWS user config files without asking")
+  parser.add_argument("--nickname", '-n', type=str,
+                      help="""Comma-separated 'key=value' list of regex subs for profile nicknames.
+                              e.g. `--nickname 'nrel-aws-(.+)=\1'` would create profile aliases that
+                              do not have the 'nrel-aws-' prefix, intended to make specifying these 
+                              profiles easier in the CLI and SDKs.""")
   parser.add_argument("--aws-config-extras", "-x", type=str, dest="extras",
                       help="""Comma-separate 'key=value' list of extra config options to write to
                               AWS CLI config. Example:
                               cli_follow_urlparam=false,aws_cli_auto_prompt=on-partial""")
-  parser.add_argument("--force", '-f', action='store_true',
-                      help="Overwrite AWS user config files without asking")
   parser.add_argument("--install-credential-process", action='store_true',
                       help="""Use this script as the `credential_process` option in the AWS
                               configuration profiles. This script will automatically create a new
@@ -472,8 +506,13 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
                               for more information.""")
   args = parser.parse_args(args)
 
+  if args.nickname:
+    args.nickname = split_key_value_pair_args(args.nickname)
+  else:
+    args.nickname = {}
+
   if args.extras:
-      args.extras = { k: v for pair in args.extras.split(',') for k, v in [pair.split('=')] }
+      args.extras = split_key_value_pair_args(args.extras)
       verbose("Got extra profiles attributes: "
               f"{' '.join([f'{k}={v}' for k,v in args.extras.items()])}")
   else:
@@ -492,7 +531,7 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
   
   if AWS_CONFIG_PATH.exists():
     if not args.force:
-      if not __INTERACTIVE__:
+      if not __INTERACTIVE:
         fail(f"{AWS_CONFIG_PATH} already exists. Please use --force or delete this file.")
       else:
         if not interactive_consent(f"{AWS_CONFIG_PATH} already exists. Overwrite? [y/N]: "):
@@ -503,13 +542,56 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
   aws_config = configparser.ConfigParser()
   
   if args.install_credential_process:
-    if shutil.which(EXECUTABLE_NAME) is None and __INTERACTIVE__:
+    if shutil.which(EXECUTABLE_NAME) is None and __INTERACTIVE:
       info(f"\n{EXECUTABLE_NAME} is not in a $PATH directory.\nIf you install this application as"
            " the credential process it is recommended you make this application executable from"
            " $PATH so the AWS CLI and SDKs can easily find and execute this application.\n")
       if input(f"Install {EXECUTABLE_NAME} to a local $PATH directory? [y/N]: ")[0].lower() == 'y':
         install()
         time.sleep(2)
+        
+  for source_pattern, target_pattern in args.nickname.items():
+    
+    nickname_regex = re.compile(source_pattern)
+    
+    for permission_set_name in list(permission_sets.keys()):
+      
+      if (match := nickname_regex.match(permission_set_name)) is None:
+        continue
+      
+      permission_set_nickname = nickname_regex.sub(target_pattern, permission_set_name)
+
+      if permission_sets.get(permission_set_nickname) is not None:
+        warn(f"Transforming {source_pattern}->{target_pattern} matched existing profile"
+             f" '{permission_set_nickname}', skipping.")
+        continue
+        
+      permission_sets[permission_set_nickname] = permission_sets[permission_set_name]
+      verbose(f"Nicknamed {permission_set_name} -> {permission_set_nickname}")
+
+  
+  if args.install_credential_process:
+    credential_process_args = [sys.executable, CURRENT_EXECUTABLE_PATH, 'get-role-credentials',
+                               "--role-name {role_name}",
+                               "--account-id {account_id}",
+                               "--output json"]
+    if isinstance(__BROWSER, str):
+      credential_process_args.append(f"--browser {shlex.quote(__BROWSER)}")
+    credential_process_body = ' '.join(credential_process_args)
+    
+    def _populate_profile_block(account_id, role_name):
+      profile_section['credential_process'] = credential_process_body.format(account_id=account_id,
+                                                                             role_name=role_name)
+  
+  else:
+    # sso_* profile attributes override credential_process attribute, they are mutually exclusive
+    
+    def _populate_profile_block(account_id, role_name):
+      profile_section['sso_start_url']  = AWS_SSO_START_URL
+      profile_section['sso_account_id'] = account_id
+      profile_section['sso_role_name']  = role_name
+      profile_section['sso_region']     = args.region
+  
   
   for profile_name, profile_data in permission_sets.items():
     section_header = f"profile {profile_name}"
@@ -518,29 +600,17 @@ https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external
     profile_section['region'] = args.region
     profile_section['output'] = args.default_output
     
-    if args.install_credential_process:
-      credential_process_body = (f'{sys.executable}'
-                                 f' {CURRENT_EXECUTABLE_PATH} get-role-credentials'
-                                 f" --role-name {profile_data['role_name']}"
-                                 f" --account-id {profile_data['aws_account_id']}"
-                                 f" --output json")
-      profile_section['credential_process'] = credential_process_body
-      
-    else:
-      # sso_* profile attributes override credential_process attribute, they are mutually exclusive
-      profile_section['sso_start_url']  = AWS_SSO_START_URL
-      profile_section['sso_account_id'] = profile_data['aws_account_id']
-      profile_section['sso_role_name']  = profile_data['role_name']
-      profile_section['sso_region']     = args.region
+    _populate_profile_block(profile_data['aws_account_id'], profile_data['role_name'])
       
     for k,v in args.extras.items():
       profile_section[k] = v
     
   
-  if not __INTERACTIVE__ and args.default_profile is None:
+  if not __INTERACTIVE and args.default_profile is None:
     fail("No default profile specified."
          " Please use --default-profile to specify any of the following profiles as default:"
          f"\n{' '.join(permission_sets.keys())}")
+  
   
   default_profile = interactive_select(list(permission_sets.keys()),
                                        prompt='Select a default profile',
@@ -569,12 +639,37 @@ def main():
   parser.add_argument('command', nargs='?', choices=command_map.keys(), help="command to run")
   parser.add_argument('-v','--version', action='version', version=__version__,
                       help='show version and exit')
+  parser.add_argument("--no-browser", action='store_false', dest="browser",
+                      help="""DON'T automatically open the user's default browser to authenticate.
+                              The device authorization URL will be printed to the terminal so the
+                              user can open the URL in the browser of their choosing.""")
+  parser.add_argument("--browser", '-b', type=str, dest="browser",
+                      help=f"""By default {EXECUTABLE_NAME} will open the user's default browser to
+                               complete SAML authorization. This flag allows the user to specify an
+                               alternative CLI command to open the URL with. \033[1mUse
+                               this option if you need to authenticate in a private window\033[0m.
+                               """)
+  parser.add_argument("--no-cache", '-C', action='store_true',
+                      help="DON'T use any cached credentials, i.e. force fresh authentication.")
   parser.add_argument("--install", action='store_true',
                       help="""Attempt to install this script to $PATH so it can be executed without
                               providing the full path of this script""")
   parser.add_argument("--uninstall", action='store_true',
                       help="Uninstall this script from $PATH")
   command_args, remaining_args = parser.parse_known_args()
+  
+  global __BROWSER
+  if command_args.browser is False:
+    __BROWSER = False
+  elif isinstance(command_args.browser, str):
+    __BROWSER = command_args.browser
+  else:
+    __BROWSER = True
+  
+  if command_args.no_cache:
+    global get_cached_access_token, get_cached_permission_set_credentials
+    get_cached_access_token = lambda *a,**kw: (None, None)
+    get_cached_permission_set_credentials =  lambda *a,**kw: None
   
   if command_args.uninstall:
     uninstall()
@@ -588,16 +683,17 @@ def main():
     printerr(parser.format_help())
     return 1
   
-  global __INTERACTIVE__
-  __INTERACTIVE__ = sys.stdout.isatty() and os.isatty(sys.stdin.fileno())
+  global __INTERACTIVE
+  __INTERACTIVE = sys.stdout.isatty() and os.isatty(sys.stdin.fileno())
   
-  if not __INTERACTIVE__:
+  if not __INTERACTIVE:
     # Output may be redirected, so only print minimal info
     global verbose
     verbose = lambda *a, **k: None
     # Throw errors instead of prompting for user input
     global interactive_select, noninteractive_select
     interactive_select = noninteractive_select
+    
 
   command_map[command_args.command](remaining_args)
 
