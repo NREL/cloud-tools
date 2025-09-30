@@ -31,8 +31,8 @@ import webbrowser
 
 __version__ = '2.0'
 
-__INTERACTIVE__ = False
-__BROWSER__ = True
+__INTERACTIVE = False
+__BROWSER = True
 
 
 AWS_DEFAULT_REGION  = 'us-west-2'
@@ -480,7 +480,7 @@ def handle_configure_command(args):
     args = parser.parse_args(args)
 
     if args.sso_session is None:
-        if not __INTERACTIVE__:
+        if not __INTERACTIVE:
             fail(f"--sso-session not provided.")
         else:
             while args.sso_session is None:
@@ -511,7 +511,7 @@ def handle_configure_command(args):
 
     if AWS_CONFIG_PATH.exists():
         if not args.force:
-            if not __INTERACTIVE__:
+            if not __INTERACTIVE:
                 fail(f"{AWS_CONFIG_PATH} already exists. Please use --force or delete this file.")
             else:
                 if not interactive_consent(f"{AWS_CONFIG_PATH} already exists. Overwrite? [y/N]: "):
@@ -564,7 +564,7 @@ def handle_configure_command(args):
             profile_section[k] = v
 
 
-    if not __INTERACTIVE__ and args.default_profile is None:
+    if not __INTERACTIVE and args.default_profile is None:
         fail("No default profile specified."
              " Please use --default-profile to specify any of the following profiles as default:"
              f"\n{' '.join(permission_sets.keys())}")
@@ -620,7 +620,7 @@ def main():
 
     if command_args.no_cache:
         global get_cached_access_token, get_cached_permission_set_credentials
-        get_cached_access_token = lambda *a,**kw: (None, None)
+        get_cached_access_token = lambda *a,**kw: {}
         get_cached_permission_set_credentials =  lambda *a,**kw: None
 
     if command_args.uninstall:
@@ -635,10 +635,10 @@ def main():
         printerr(parser.format_help())
         return 1
 
-    global __INTERACTIVE__
-    __INTERACTIVE__ = sys.stdout.isatty() and os.isatty(sys.stdin.fileno())
+    global __INTERACTIVE
+    __INTERACTIVE = sys.stdout.isatty() and os.isatty(sys.stdin.fileno())
 
-    if not __INTERACTIVE__:
+    if not __INTERACTIVE:
         # Output may be redirected, so only print minimal info
         global verbose
         verbose = lambda *a, **k: None
