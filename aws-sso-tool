@@ -6,7 +6,7 @@ Can also optionally serve as the credential_process for AWS profiles to automati
 SAML auth if the user's current credentials or SSO token are expired, preventing the user from
 having to run `aws sso login` after encountering an error message about expired credentials.
 
-                                                                         by Michael Bartlett
+                                   by Michael Bartlett
 """
 import argparse
 import boto3
@@ -40,8 +40,6 @@ AWS_DEFAULT_REGION  = 'us-west-2'
 AWS_SSO_START_URL   = 'https://nrel-ace.awsapps.com/start#/'
 AWS_SSO_GRANT_TYPE  = 'urn:ietf:params:oauth:grant-type:device_code'
 AWS_SSO_CLIENT_NAME = 'aws-sso-config-generator'
-# 08cda65e3cd219acaf8d98e0d31c99d1a1c11fd5
-# 63a9ab4a5fd93f828ebc18e6d6fee7a6fe7aa06c
 
 HOME = pathlib.Path.home()
 AWS_CONFIG_PATH     = HOME / ".aws/config"

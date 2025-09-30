@@ -1,0 +1,4 @@
+aws-sso-tool config --nickname '(.+)-AdministratorAccess=\1' --default-profile
+nrel-aws-ace --force --browser '/Applications/Google\
+Chrome.app/Contents/MacOS/Google\ Chrome --incognito'
+--install-credential-process
