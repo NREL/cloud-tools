@@ -1,5 +1,5 @@
-# NREL Cloud Computing Tools
-Software utilities for the NREL cloud computing user community.
+# NLR Cloud Computing Tools
+Software utilities for the NLR cloud computing user community.
 
 ## [aws-sso-tool](aws-sso-tool)
 
@@ -139,7 +139,7 @@ If you use the CLI with multiple accounts, typing out the full profile names can
 
 `--nickname` accepts a comma-separated list of match=transform mappings of regex substitution patterns.
 
-For example, most NREL AWS accounts begin with `nrel-aws`, so it may be redundant to have to type this token every time a profile is specified. If you want to generate a nicknamed profile for each of your permission sets without this prefix, you could run:
+For example, most NLR AWS accounts begin with `nrel-aws`, so it may be redundant to have to type this token every time a profile is specified. If you want to generate a nicknamed profile for each of your permission sets without this prefix, you could run:
 
 ```
 $ aws-sso-tool config --nickname 'nrel-aws-(.+)=\1'
